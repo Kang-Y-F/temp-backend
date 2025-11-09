@@ -1,0 +1,28 @@
+spring:
+  application:
+    name: temp-backend
+
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      - org.mybatis.spring.boot.autoconfigure.MybatisAutoConfiguration
+
+server:
+  port: 8080
+
+modbus:
+  serial:
+    port: "COM7"      # ????
+    baudRate: 57600
+    dataBits: 8
+    stopBits: 1
+    parity: 0         # 0-None,1-Odd,2-Even
+  slaveId: 1
+  register:
+    type: "holding"   # ???03?????????
+    address: 0        # ???? 0x0000
+    length: 2         # ?? 2 ?????32 ??
+    scale: 0.0001     # ????
+    byteOrder: "ABCD" # ?????00 00 04 CA -> 0x000004CA?
+  pollIntervalMs: 1000
