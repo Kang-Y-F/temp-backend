@@ -2,27 +2,73 @@ spring:
   application:
     name: temp-backend
 
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
-      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
-      - org.mybatis.spring.boot.autoconfigure.MybatisAutoConfiguration
+  # 移除自动配置排除，因为现在我们需要数据库
+  # autoconfigure:
+  #   exclude:
+  #     - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+  #     - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+  #     - org.mybatis.spring.boot.autoconfigure.MybatisAutoConfiguration
+
+  # SQLite 数据库配置
+  datasource:
+    url: jdbc:sqlite:./data/edge_sensor_data.db # SQLite数据库文件路径，./data目录会自动创建
+    driver-class-name: org.sqlite.JDBC
+  jpa:
+    hibernate:
+      ddl-auto: update # 启动时自动更新数据库表结构。生产环境建议改为 'validate' 或 'none'
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.SQLiteDialect # 指定SQLite方言
+    show-sql: false # 打印Hibernate生成的SQL语句（调试时可设为true）
+
 
 server:
   port: 8080
 
 modbus:
   serial:
-    port: "COM7"      # ????
+    port: "COM8"      # 根据您的Jetson实际串口名，例如 "/dev/ttyACM0"
     baudRate: 57600
     dataBits: 8
     stopBits: 1
     parity: 0         # 0-None,1-Odd,2-Even
   slaveId: 1
-  register:
-    type: "holding"   # ???03?????????
-    address: 0        # ???? 0x0000
-    length: 2         # ?? 2 ?????32 ??
-    scale: 0.0001     # ????
-    byteOrder: "ABCD" # ?????00 00 04 CA -> 0x000004CA?
-  pollIntervalMs: 1000
+  register: # 温度寄存器配置
+    type: "holding"   # 读保持寄存器(03) 还是 输入寄存器(04)
+    address: 0        # 寄存器起始地址，例如 0x0000
+    dataType: 5       # 数据类型：5代表FOUR_BYTE_INT_SIGNED (32位有符号整数)。其他DataType请查阅modbus4j文档。
+    # (如 DataType.TWO_BYTE_INT_SIGNED 为16位有符号整数，DataType.FOUR_BYTE_FLOAT 为32位浮点数)
+    scale: 0.0001     # 比例因子，例如原始值10000乘以0.0001得到1.0
+    # byteOrder: "ABCD" # modbus4j的getValue方法通常会自动处理，如果需要可以自行在ModbusRtuManager中自定义处理逻辑
+  pollIntervalMs: 1000 # 传感器数据轮询间隔 (毫秒)
+
+  humidity: # 湿度寄存器配置 (如果无法获取，请将address设为-1或注释掉相关行)
+    regType: "holding"
+    address: -1 # 例如：1，如果您的传感器有湿度数据，请替换为实际地址
+    dataType: 5 # 假设是32位有符号整数，根据实际情况调整
+    scale: 0.01 # 假设比例因子
+
+  pressure: # 压力寄存器配置 (如果无法获取，请将address设为-1或注释掉相关行)
+    regType: "holding"
+    address: -1 # 例如：2，如果您的传感器有压力数据，请替换为实际地址
+    dataType: 5 # 假设是32位有符号整数，根据实际情况调整
+    scale: 0.01 # 假设比例因子
+
+edge:
+  deviceId: jetson-001 # 边缘设备的唯一标识符
+
+prediction:
+  service:
+    url: http://localhost:5000/predict # Python预测服务的URL。请确保Python服务在Jetson上运行，并且此URL可访问。
+
+alarm:
+  threshold:
+    upper: 35.0  # 温度上限报警阈值 (摄氏度)
+    lower: 5.0   # 温度下限报警阈值 (摄氏度)
+    deviation: 3.0 # 实际温度与预测温度偏差报警阈值 (摄氏度)
+
+cloud:
+  upload:
+    url: http://your-cloud-backend.com/api/sensor-data # 云端数据上传API的URL。请替换为实际的云端地址。
+    batchSize: 50 # 每次批量上传的数据条数
+    batchIntervalMs: 60000 # 批量上传的间隔时间 (毫秒)，例如每分钟上传一次
