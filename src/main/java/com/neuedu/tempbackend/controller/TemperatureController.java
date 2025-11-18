@@ -1,19 +1,23 @@
 package com.neuedu.tempbackend.controller;
 
 import com.fazecast.jSerialComm.SerialPort;
+import com.neuedu.tempbackend.config.ModbusProperties;
 import com.neuedu.tempbackend.config.ModbusRtuManager;
-import com.neuedu.tempbackend.model.SensorData; // 导入SensorData
+import com.neuedu.tempbackend.model.SensorData;
 import com.neuedu.tempbackend.service.TemperaturePollingService;
-import com.neuedu.tempbackend.repository.SensorDataRepository; // 导入Repository
+import com.neuedu.tempbackend.repository.SensorDataRepository;
+import org.springframework.data.domain.PageRequest; // 确保导入 PageRequest
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.time.ZoneId; // 用于SseEmitter的时间格式化
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @RestController
 @RequestMapping("/api")
@@ -21,7 +25,10 @@ public class TemperatureController {
 
     private final TemperaturePollingService pollingService;
     private final ModbusRtuManager manager;
-    private final SensorDataRepository sensorDataRepository; // 注入SensorDataRepository
+    private final SensorDataRepository sensorDataRepository;
+
+    private final Map<String, ConcurrentHashMap<SseEmitter, ScheduledExecutorService>> sseEmitters = new ConcurrentHashMap<>();
+
 
     public TemperatureController(
             TemperaturePollingService pollingService,
@@ -32,51 +39,79 @@ public class TemperatureController {
         this.sensorDataRepository = sensorDataRepository;
     }
 
-    // 1. 普通 GET：返回最新的SensorData对象 (包含预测和报警信息)
-    @GetMapping("/current-data")
-    public SensorData currentSensorData() {
-        // 直接从 pollingService 获取最新处理并存储的完整 SensorData 对象
-        // 这种方式比从数据库中再查询一次更快，因为数据可能还在内存中
-        return pollingService.getLatestCompleteSensorData();
+    // 1. 获取所有已配置的传感器列表
+    @GetMapping("/sensors")
+    public List<ModbusProperties.SensorProperties> getAllConfiguredSensors() {
+        return pollingService.getAllConfiguredSensors();
     }
 
+    // 2. 获取单个传感器的最新 SensorData 对象 (包含预测和报警信息)
+    @GetMapping("/sensors/{sensorId}/current-data")
+    public ResponseEntity<SensorData> currentSensorData(@PathVariable String sensorId) {
+        SensorData latestData = pollingService.getLatestCompleteSensorData(sensorId);
+        if (latestData == null || latestData.getSensorId() == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(latestData);
+    }
 
-    // 2. SSE 实时流
-    @GetMapping(path = "/data/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter streamSensorData() {
+    // 3. SSE 实时流：获取某个传感器的实时数据流
+    @GetMapping(path = "/sensors/{sensorId}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter streamSensorData(@PathVariable String sensorId) {
         SseEmitter emitter = new SseEmitter(0L);
 
-        Timer timer = new Timer(true);
-        timer.scheduleAtFixedRate(new TimerTask() {
-            @Override
-            public void run() {
-                try {
-                    // 从 pollingService 获取最新的完整 SensorData 对象发送给SSE客户端
-                    SensorData latestData = pollingService.getLatestCompleteSensorData();
+        if (pollingService.getAllConfiguredSensors().stream().noneMatch(s -> s.getSensorId().equals(sensorId))) {
+            emitter.completeWithError(new IllegalArgumentException("Sensor ID " + sensorId + " not configured."));
+            return emitter;
+        }
 
+        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+        sseEmitters.computeIfAbsent(sensorId, k -> new ConcurrentHashMap<>()).put(emitter, scheduler);
+
+        emitter.onCompletion(() -> {
+            scheduler.shutdown();
+            sseEmitters.get(sensorId).remove(emitter);
+            System.out.println("SSE emitter for " + sensorId + " completed.");
+        });
+        emitter.onError(e -> {
+            scheduler.shutdown();
+            sseEmitters.get(sensorId).remove(emitter);
+            System.err.println("SSE emitter for " + sensorId + " error: " + e.getMessage());
+        });
+        emitter.onTimeout(() -> {
+            scheduler.shutdown();
+            sseEmitters.get(sensorId).remove(emitter);
+            System.err.println("SSE emitter for " + sensorId + " timed out.");
+            emitter.complete();
+        });
+
+
+        scheduler.scheduleAtFixedRate(() -> {
+            try {
+                SensorData latestData = pollingService.getLatestCompleteSensorData(sensorId);
+                if (latestData != null && latestData.getSensorId() != null) {
                     emitter.send(SseEmitter.event()
                             .name("sensorData")
                             .data(latestData));
-
-                } catch (IOException e) {
-                    System.err.println("SSE stream error: " + e.getMessage());
-                    emitter.completeWithError(e);
-                    cancel();
-                } catch (Exception e) {
-                    System.err.println("Error sending SSE event: " + e.getMessage());
-                    emitter.completeWithError(e);
-                    cancel();
                 }
+            } catch (IOException e) {
+                System.err.println("SSE stream for " + sensorId + " send error: " + e.getMessage());
+                emitter.completeWithError(e);
+                scheduler.shutdown();
+            } catch (Exception e) {
+                System.err.println("Error in SSE event for " + sensorId + ": " + e.getMessage());
+                emitter.completeWithError(e);
+                scheduler.shutdown();
             }
-        }, 0, pollingService.pollIntervalMs());
+        }, 0, pollingService.getDefaultPollIntervalMs(), TimeUnit.MILLISECONDS);
 
         return emitter;
     }
 
 
-    // 3. 列出本机串口，用于前端下拉框 (保持不变)
+    // 4. 列出本机串口，用于前端下拉框
     @GetMapping("/serial/ports")
-    public List<Map<String, String>> ports() {
+    public List<Map<String, String>> getAvailableSerialPorts() {
         var list = new ArrayList<Map<String,String>>();
         for (SerialPort p : SerialPort.getCommPorts()) {
             list.add(Map.of(
@@ -87,27 +122,38 @@ public class TemperatureController {
         return list;
     }
 
-    // 4. 从网页修改串口配置 (保持不变)
+    // 5. 从网页修改串口配置 (此API已过时，现在配置通过 application.yml 或云端下发)
     public record SerialCfg(String port, int baudRate, int dataBits, int stopBits, int parity) {}
-
     @PostMapping("/serial/config")
-    public Map<String, Object> config(@RequestBody SerialCfg cfg) throws Exception {
-        manager.reconfigure(cfg.port(), cfg.baudRate(), cfg.dataBits(), cfg.stopBits(), cfg.parity());
-        return Map.of("ok", true);
+    public ResponseEntity<Map<String, Object>> configSerialPort(@RequestBody SerialCfg cfg) {
+        return ResponseEntity.badRequest().body(Map.of("error", "This API is deprecated. Serial port configuration is managed via application.yml or cloud sync."));
     }
 
-    // 5. 获取最近N条历史数据
+
+    // 6. 获取某个传感器的最近N条历史数据
+    @GetMapping("/sensors/{sensorId}/history/{count}")
+    public List<SensorData> getHistoryDataBySensorId(@PathVariable String sensorId, @PathVariable int count) {
+        return pollingService.getRecentSensorDataBySensorId(sensorId, count);
+    }
+
+    // 7. 获取所有传感器的最近N条历史数据 (可选)
     @GetMapping("/data/history/{count}")
-    public List<SensorData> getHistoryData(@PathVariable int count) {
-        // 直接调用 service 的新方法
-        return pollingService.getRecentSensorData(count);
+    public List<SensorData> getHistoryDataForAllSensors(@PathVariable int count) {
+        return pollingService.getRecentSensorDataForAll(count);
     }
 
-    // 6. 获取报警数据 (例如，最近100条报警)
-    @GetMapping("/data/alarms")
-    public List<SensorData> getAlarmData() {
-        // 这里可以从数据库查询报警数据
-        // 为简化，直接调用repository获取报警数据，可以再封装一层service
-        return sensorDataRepository.findByAlarmTriggeredTrueOrderByTimestampDesc();
+
+    // 8. 获取某个传感器的报警数据 (例如，最近N条报警)
+    @GetMapping("/sensors/{sensorId}/alarms/{count}")
+    public List<SensorData> getAlarmDataBySensorId(@PathVariable String sensorId, @PathVariable int count) {
+        // 使用 PageRequest.of(0, count) 创建 Pageable 对象，页码从0开始
+        return sensorDataRepository.findBySensorIdAndAlarmTriggeredTrueOrderByTimestampDesc(sensorId, PageRequest.of(0, count));
+    }
+
+    // 9. 获取所有传感器的报警数据 (例如，最近N条报警)
+    @GetMapping("/data/alarms/{count}")
+    public List<SensorData> getAlarmDataForAllSensors(@PathVariable int count) {
+        // 使用 PageRequest.of(0, count) 创建 Pageable 对象
+        return sensorDataRepository.findByAlarmTriggeredTrueOrderByTimestampDesc(PageRequest.of(0, count));
     }
 }

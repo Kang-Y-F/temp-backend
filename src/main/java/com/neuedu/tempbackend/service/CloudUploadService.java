@@ -15,7 +15,7 @@ public class CloudUploadService {
 
     private final RestTemplate restTemplate;
 
-    @Value("${cloud.upload.url:http://your-cloud-backend.com/api/sensor-data}") // 云端数据上传API的URL
+    @Value("${cloud.upload.url:http://your-cloud-backend.com/api/sensor-data}")
     private String cloudUploadUrl;
 
     public CloudUploadService(RestTemplate restTemplate) {
@@ -32,13 +32,11 @@ public class CloudUploadService {
         headers.setContentType(MediaType.APPLICATION_JSON);
         HttpEntity<SensorData> request = new HttpEntity<>(data, headers);
         try {
-            // 假设云端API返回一个简单的字符串或状态码
             String response = restTemplate.postForObject(cloudUploadUrl, request, String.class);
-            System.out.println("Data uploaded to cloud (single): " + response);
+            System.out.println("Data uploaded to cloud (single for " + data.getSensorId() + "): " + response);
             return true;
         } catch (Exception e) {
-            System.err.println("Failed to upload single data to cloud: " + e.getMessage());
-            // 实际项目中应加入重试机制、本地缓存待上传队列等
+            System.err.println("Failed to upload single data for sensor " + data.getSensorId() + " to cloud: " + e.getMessage());
             return false;
         }
     }
@@ -50,14 +48,14 @@ public class CloudUploadService {
      */
     public boolean uploadBatchData(List<SensorData> dataList) {
         if (dataList == null || dataList.isEmpty()) {
-            return true; // 没有数据也算成功上传
+            return true;
         }
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         HttpEntity<List<SensorData>> request = new HttpEntity<>(dataList, headers);
         try {
-            // 假设批量上传有不同的API路径，例如 /batch
-            String response = restTemplate.postForObject(cloudUploadUrl + "/batch", request, String.class);
+            String batchUploadUrl = cloudUploadUrl + "/batch";
+            String response = restTemplate.postForObject(batchUploadUrl, request, String.class);
             System.out.println("Data uploaded to cloud (batch): " + response + " records: " + dataList.size());
             return true;
         } catch (Exception e) {
