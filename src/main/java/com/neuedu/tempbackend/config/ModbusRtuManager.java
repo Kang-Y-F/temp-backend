@@ -45,11 +45,11 @@ public class ModbusRtuManager implements DisposableBean {
                 // 注意：如果全局默认没有设置，而连接特定也没有设置，这里可能会出现NPE。
                 // 推荐在application.yml中提供全局默认值，或者在这里给个兜底
                 String port = connProp.getPort();
-                int baudRate = Optional.ofNullable(connProp.getBaudRate()).orElse(modbusProperties.getSerial().getBaudRate());
-                int dataBits = Optional.ofNullable(connProp.getDataBits()).orElse(modbusProperties.getSerial().getDataBits());
-                int stopBits = Optional.ofNullable(connProp.getStopBits()).orElse(modbusProperties.getSerial().getStopBits());
-                int parity = Optional.ofNullable(connProp.getParity()).orElse(modbusProperties.getSerial().getParity());
-                String encoding = Optional.ofNullable(connProp.getEncoding()).orElse(modbusProperties.getSerial().getEncoding());
+                int baudRate = Optional.ofNullable(connProp.getBaudRate()).orElse(modbusProperties.getSerial().getBaudRate() != null ? modbusProperties.getSerial().getBaudRate() : 9600); // 兜底值
+                int dataBits = Optional.ofNullable(connProp.getDataBits()).orElse(modbusProperties.getSerial().getDataBits() != null ? modbusProperties.getSerial().getDataBits() : 8); // 兜底值
+                int stopBits = Optional.ofNullable(connProp.getStopBits()).orElse(modbusProperties.getSerial().getStopBits() != null ? modbusProperties.getSerial().getStopBits() : 1); // 兜底值
+                int parity = Optional.ofNullable(connProp.getParity()).orElse(modbusProperties.getSerial().getParity() != null ? modbusProperties.getSerial().getParity() : 0); // 兜底值
+                String encoding = Optional.ofNullable(connProp.getEncoding()).orElse(modbusProperties.getSerial().getEncoding() != null ? modbusProperties.getSerial().getEncoding() : "RTU"); // 兜底值
 
                 // 创建并初始化Modbus Master
                 ModbusMaster master = createAndInitMaster(port, baudRate, dataBits, stopBits, parity, encoding);

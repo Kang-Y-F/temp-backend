@@ -25,7 +25,7 @@ modbus:
     stopBits: 1
     parity: 0      # 0=None
     encoding: RTU
-    pollIntervalMs: 1500   # 全局轮询间隔，可被单个传感器覆盖
+    pollIntervalMs: 1000   # 全局轮询间隔，用于实时采集
 
     # ------------------ 多个物理串口定义 ------------------
     connections:
@@ -35,9 +35,9 @@ modbus:
         baudRate: 57600                 # 可单独覆盖全局
 
       # 串口2：温湿度+气压一体传感器 × 3
-#      - name: "thp-combo"               # 内部引用名
-#        port: "/dev/ttyUSB0"
-#        baudRate: 9600                  # 假设一体传感器波特率是9600，根据实际改
+    #      - name: "thp-combo"               # 内部引用名
+    #        port: "/dev/ttyUSB0"
+    #        baudRate: 9600                  # 假设一体传感器波特率是9600，根据实际改
 
     # ------------------ 所有传感器列表 ------------------
     sensors:
@@ -64,86 +64,86 @@ modbus:
           scale: 0.0001
           byteOrder: "ABCD"
 
-#      - sensorId: "freezer-01"
-#        sensorName: "冷冻库1号"
-#        connection: "temp-only"
-#        slaveId: 3
-#        temperature:
-#          registerType: "holding"
-#          address: 0
-#          dataType: 5
-#          scale: 0.0001
-#          byteOrder: "ABCD"
-#
-#      # ---------- 串口2：3个温湿度+气压一体传感器 ----------
-#      - sensorId: "env-01"
-#        sensorName: "环境监测点1"
-#        connection: "thp-combo"
-#        slaveId: 1
-#        temperature:
-#          registerType: "holding"
-#          address: 0                   # 假设温度在寄存器0
-#          dataType: 5
-#          scale: 0.0001
-#          byteOrder: "ABCD"
-#        humidity:
-#          registerType: "holding"
-#          address: 1                   # 湿度在寄存器1
-#          dataType: 5
-#          scale: 0.0001
-#          byteOrder: "ABCD"
-#        pressure:
-#          registerType: "holding"
-#          address: 2                   # 气压在寄存器2
-#          dataType: 5
-#          scale: 0.0001
-#          byteOrder: "ABCD"
-#
-#      - sensorId: "env-02"
-#        sensorName: "环境监测点2"
-#        connection: "thp-combo"
-#        slaveId: 2
-#        temperature:
-#          registerType: "holding"
-#          address: 0
-#          dataType: 5
-#          scale: 0.0001
-#          byteOrder: "ABCD"
-#        humidity:
-#          registerType: "holding"
-#          address: 1
-#          dataType: 5
-#          scale: 0.0001
-#          byteOrder: "ABCD"
-#        pressure:
-#          registerType: "holding"
-#          address: 2
-#          dataType: 5
-#          scale: 0.0001
-#          byteOrder: "ABCD"
-#
-#      - sensorId: "env-03"
-#        sensorName: "环境监测点3"
-#        connection: "thp-combo"
-#        slaveId: 3
-#        temperature:
-#          registerType: "holding"
-#          address: 0
-#          dataType: 5
-#          scale: 0.0001
-#          byteOrder: "ABCD"
-#        humidity:
-#          registerType: "holding"
-#          address: 1
-#          dataType: 5
-#          scale: 0.0001
-#          byteOrder: "ABCD"
-#        pressure:
-#          registerType: "holding"
-#          address: 2
-#          dataType: 5
-#          scale: 0.0001
-#          byteOrder: "ABCD"
+      #      - sensorId: "freezer-01"
+      #        sensorName: "冷冻库1号"
+      #        connection: "temp-only"
+      #        slaveId: 3
+      #        temperature:
+      #          registerType: "holding"
+      #          address: 0
+      #          dataType: 5
+      #          scale: 0.0001
+      #          byteOrder: "ABCD"
+      #
+      #      # ---------- 串口2：3个温湿度+气压一体传感器 ----------
+      #      - sensorId: "env-01"
+      #        sensorName: "环境监测点1"
+      #        connection: "thp-combo"
+      #        slaveId: 1
+      #        temperature:
+      #          registerType: "holding"
+      #          address: 0                   # 假设温度在寄存器0
+      #          dataType: 5
+      #          scale: 0.0001
+      #          byteOrder: "ABCD"
+      #        humidity:
+      #          registerType: "holding"
+      #          address: 1                   # 湿度在寄存器1
+      #          dataType: 5
+      #          scale: 0.0001
+      #          byteOrder: "ABCD"
+      #        pressure:
+      #          registerType: "holding"
+      #          address: 2                   # 气压在寄存器2
+      #          dataType: 5
+      #          scale: 0.0001
+      #          byteOrder: "ABCD"
+      #
+      #      - sensorId: "env-02"
+      #        sensorName: "环境监测点2"
+      #        connection: "thp-combo"
+      #        slaveId: 2
+      #        temperature:
+      #          registerType: "holding"
+      #          address: 0
+      #          dataType: 5
+      #          scale: 0.0001
+      #          byteOrder: "ABCD"
+      #        humidity:
+      #          registerType: "holding"
+      #          address: 1
+      #          dataType: 5
+      #          scale: 0.0001
+      #          byteOrder: "ABCD"
+      #        pressure:
+      #          registerType: "holding"
+      #          address: 2
+      #          dataType: 5
+      #          scale: 0.0001
+      #          byteOrder: "ABCD"
+      #
+      #      - sensorId: "env-03"
+      #        sensorName: "环境监测点3"
+      #        connection: "thp-combo"
+      #        slaveId: 3
+      #        temperature:
+      #          registerType: "holding"
+      #          address: 0
+      #          dataType: 5
+      #          scale: 0.0001
+      #          byteOrder: "ABCD"
+      #        humidity:
+      #          registerType: "holding"
+      #          address: 1
+      #          dataType: 5
+      #          scale: 0.0001
+      #          byteOrder: "ABCD"
+      #        pressure:
+      #          registerType: "holding"
+      #          address: 2
+      #          dataType: 5
+      #          scale: 0.0001
+      #          byteOrder: "ABCD"
 
       # 以后想再加第7、8、9...个传感器，直接在这里继续写就行
 
@@ -153,6 +153,11 @@ edge:
 prediction:
   service:
     url: http://localhost:5000/predict
+    trendUrl: http://localhost:5000/predict_trend
+  trend:
+    checkIntervalMs: 30000 # 趋势预测检查间隔，例如每 30 秒
+    historyMinutes: 10     # 预测模型输入需要的回溯历史数据时长（分钟），例如过去 10 分钟
+    horizonSeconds: 60     # 预测未来多长时间（秒），例如未来 60 秒
 
 alarm:
   threshold:
@@ -164,4 +169,12 @@ cloud:
   upload:
     url: http://your-cloud-backend.com/api/sensor-data
     batchSize: 50
-    batchIntervalMs: 60000
+    batchIntervalMs: 60000 # 批量上传间隔，例如每 1 分钟
+
+data:
+  compaction:
+    intervalMs: 60000 # 数据稀疏化任务每隔 1 分钟执行一次
+  retention: # 数据保留策略
+    realtimeMinutes: 1 # 秒级数据保留时长 (REALTIME)
+    minutelyHours: 24 # 分钟级数据保留时长 (MINUTELY_COMPACTED)
+    hourlyDays: 7 # 小时级数据保留时长 (HOURLY_COMPACTED)

@@ -1,4 +1,3 @@
-// src/main/java/com/neuedu/tempbackend/service/AlarmService.java
 package com.neuedu.tempbackend.service;
 
 import com.neuedu.tempbackend.model.EdgeConfig;
@@ -32,7 +31,6 @@ public class AlarmService {
     private volatile Float currentGlobalDeviationThreshold;
 
     // 持有传感器特定报警阈值的映射，这个Map由ConfigSyncService通过Setter方法更新
-    // 这样AlarmService就不需要直接依赖ConfigSyncService了
     private final ConcurrentMap<String, EdgeConfig.AlarmThresholdsConfig> sensorSpecificThresholds = new ConcurrentHashMap<>();
 
     // 构造函数，不再注入 ConfigSyncService
@@ -52,6 +50,14 @@ public class AlarmService {
      * @param newThresholds 从云端获取的全局阈值配置
      */
     public void updateGlobalThresholds(EdgeConfig.AlarmThresholdsConfig newThresholds) {
+        if (newThresholds == null) { // 如果云端全局配置为null，回退到yml默认
+            this.currentGlobalUpperThreshold = appDefaultUpperThreshold;
+            this.currentGlobalLowerThreshold = appDefaultLowerThreshold;
+            this.currentGlobalDeviationThreshold = appDefaultDeviationThreshold;
+            System.out.println("AlarmService: Global alarm thresholds set to application.yml defaults (cloud config was null).");
+            return;
+        }
+
         if (newThresholds.getUpper() != null) {
             this.currentGlobalUpperThreshold = newThresholds.getUpper();
         } else {
@@ -73,14 +79,17 @@ public class AlarmService {
     /**
      * 由 ConfigSyncService 调用，更新传感器特定的报警阈值。
      * @param sensorId 传感器ID
-     * @param thresholds 该传感器的特定阈值
+     * @param thresholds 该传感器的特定阈值 (如果为null，表示清除特定阈值)
      */
     public void updateSensorSpecificThresholds(String sensorId, EdgeConfig.AlarmThresholdsConfig thresholds) {
-        if (sensorId != null && thresholds != null) {
-            sensorSpecificThresholds.put(sensorId, thresholds);
-        } else if (sensorId != null) {
-            // 如果云端下发配置明确移除某个传感器的特定阈值，则从map中移除
-            sensorSpecificThresholds.remove(sensorId);
+        if (sensorId != null) {
+            if (thresholds != null) {
+                sensorSpecificThresholds.put(sensorId, thresholds);
+                System.out.println("AlarmService: Updated specific alarm thresholds for sensor " + sensorId + ". Upper: " + thresholds.getUpper() + ", Lower: " + thresholds.getLower() + ", Deviation: " + thresholds.getDeviation());
+            } else {
+                sensorSpecificThresholds.remove(sensorId);
+                System.out.println("AlarmService: Cleared specific alarm thresholds for sensor " + sensorId + ".");
+            }
         }
     }
 
@@ -90,9 +99,9 @@ public class AlarmService {
      * @param sensorId 传感器ID
      * @return 实际生效的阈值配置
      */
-    private EdgeConfig.AlarmThresholdsConfig getEffectiveThresholds(String sensorId) {
+    public EdgeConfig.AlarmThresholdsConfig getEffectiveThresholds(String sensorId) {
         // 尝试获取传感器特定的阈值
-        EdgeConfig.AlarmThresholdsConfig specificThresholds = sensorSpecificThresholds.get(sensorId); // <-- 直接从自身map获取
+        EdgeConfig.AlarmThresholdsConfig specificThresholds = sensorSpecificThresholds.get(sensorId);
 
         // 创建一个用于返回的有效阈值对象
         EdgeConfig.AlarmThresholdsConfig effective = new EdgeConfig.AlarmThresholdsConfig();
@@ -176,6 +185,4 @@ public class AlarmService {
         }
         return "No Alarm";
     }
-
-
 }
