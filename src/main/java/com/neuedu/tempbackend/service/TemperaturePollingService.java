@@ -10,6 +10,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
+import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.PostConstruct;
 import java.time.Instant;
@@ -142,6 +143,7 @@ public class TemperaturePollingService {
      * 轮询并处理单个传感器的逻辑
      * @param sensorProp 传感器的配置属性 (来自 application.yml，包含了 Modbus 寄存器信息)
      */
+    @Transactional
     public void pollAndProcessSingleSensor(ModbusProperties.SensorProperties sensorProp) {
         String sensorId = sensorProp.getSensorId();
         String sensorName = sensorProp.getSensorName();

@@ -3,8 +3,11 @@ spring:
     name: temp-backend
 
   datasource:
-    url: jdbc:sqlite:./data/edge_sensor_data.db
+    url: jdbc:sqlite:./data/edge_sensor_data.db?journal_mode=WAL&busy_timeout=5000
     driver-class-name: org.sqlite.JDBC
+    hikari:
+      connection-timeout: 20000 # 获取连接的超时时间 (20秒)
+      maximum-pool-size: 5      # 连接池最大连接数，SQLite 不宜设置过大
   jpa:
     hibernate:
       ddl-auto: create

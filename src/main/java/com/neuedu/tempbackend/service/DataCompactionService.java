@@ -4,9 +4,13 @@ import com.neuedu.tempbackend.model.SensorData;
 import com.neuedu.tempbackend.repository.SensorDataRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional; // 导入事务注解
+
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -36,6 +40,11 @@ public class DataCompactionService {
 
     @Scheduled(fixedRateString = "${data.compaction.intervalMs:60000}") // 默认每1分钟运行一次
     @Transactional // 确保整个任务在事务中，聚合和删除操作要么都成功，要么都回滚
+    @Retryable(
+            value = {CannotAcquireLockException.class}, // 当捕获到锁定异常时重试
+            maxAttempts = 5, // 最多重试 5 次
+            backoff = @Backoff(delay = 100, multiplier = 2) // 初始延迟 100ms，每次乘 2 (100, 200, 400, 800, 1600)
+    )
     public void compactData() {
         System.out.println("开始执行数据稀疏化任务...");
         LocalDateTime now = LocalDateTime.now();

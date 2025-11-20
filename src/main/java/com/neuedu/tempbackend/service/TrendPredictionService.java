@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -46,6 +47,7 @@ public class TrendPredictionService {
      * 定时任务：检查未来温度预警。
      * 例如每 30 秒运行一次。
      */
+    @Transactional
     @Scheduled(fixedRateString = "${prediction.trend.checkIntervalMs:30000}")
     public void checkFutureTemperatureAlerts() {
         System.out.println("开始执行未来温度趋势预测和预警检查...");
