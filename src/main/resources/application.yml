@@ -1,20 +1,28 @@
 spring:
-  application:
-    name: temp-backend
-
   datasource:
-    url: jdbc:sqlite:./data/edge_sensor_data.db?journal_mode=WAL&busy_timeout=5000
-    driver-class-name: org.sqlite.JDBC
+    # 方式一：内存数据库 (数据不持久化，每次重启丢失) - 适合开发和测试
+    # url: jdbc:h2:mem:edge_sensor_data;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    # 方式二：文件数据库 (数据持久化到文件，推荐用于生产边缘设备)
+    url: jdbc:h2:file:./data/edge_sensor_data_h2;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa # H2 默认用户名
+    password:    # H2 默认密码，可以为空
     hikari:
-      connection-timeout: 20000 # 获取连接的超时时间 (20秒)
-      maximum-pool-size: 5      # 连接池最大连接数，SQLite 不宜设置过大
+      connection-timeout: 20000
+      maximum-pool-size: 10 # H2 可以适当增加连接池大小，例如 10-20
+      # H2 默认支持 MVCC，无需像 SQLite 那样设置journal_mode
   jpa:
     hibernate:
-      ddl-auto: create
+      ddl-auto: create # 启动时自动创建表。如果是生产环境，可能需要改为 update 或 validate
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.SQLiteDialect
+        dialect: org.hibernate.dialect.H2Dialect
     show-sql: false
+
+  h2:
+    console:
+      enabled: true   # 启用 H2 Web 控制台
+      path: /h2-console # 控制台的访问路径，默认为 /h2-console
 
 server:
   port: 8080
