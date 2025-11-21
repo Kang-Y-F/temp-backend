@@ -50,7 +50,7 @@ public class TemperaturePollingService {
 
     private final Map<String, ScheduledFuture<?>> scheduledPollingTasks = new ConcurrentHashMap<>();
 
-    @Value("${data.retention.realtimeMinutes:10}")
+    @Value("${data.retention.realtimeMinutes:20}")
     private int realtimeRetentionMinutes; // 秒级数据保留时长
 
     @Value("${data.retention.minutelyHours:24}")
@@ -145,20 +145,23 @@ public class TemperaturePollingService {
      */
     @Transactional
     public void pollAndProcessSingleSensor(ModbusProperties.SensorProperties sensorProp) {
+        long overallStart = System.currentTimeMillis();
         String sensorId = sensorProp.getSensorId();
         String sensorName = sensorProp.getSensorName();
         String connectionName = sensorProp.getConnection();
         int slaveId = sensorProp.getSlaveId();
 
         try {
-            System.out.println("开始轮询传感器 [" + sensorName + " (" + sensorId + ")]...");
+            System.out.println("--- 开始轮询传感器 [" + sensorName + " (" + sensorId + ")]，线程: " + Thread.currentThread().getName() + " ---");
 
             // 1. 读取传感器数据
+            long modbusStart = System.currentTimeMillis();
             Optional<Float> tempOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getTemperature());
             Optional<Float> humidityOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getHumidity());
             Optional<Float> pressureOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getPressure());
+            long modbusEnd = System.currentTimeMillis();
+            System.out.println("  Modbus读取耗时: " + (modbusEnd - modbusStart) + "ms");
 
-            // 如果没有配置温度寄存器，或者读取失败，则跳过本次处理
             if (sensorProp.getTemperature() == null || tempOpt.isEmpty()) {
                 System.err.println("传感器 [" + sensorName + " (" + sensorId + ")] 未配置或未读取到有效温度数据，跳过本次处理。");
                 return;
@@ -169,12 +172,16 @@ public class TemperaturePollingService {
             Float currentPressure = pressureOpt.orElse(null);
 
             // 2. 调用预测服务 (单点预测)
+            long predictStart = System.currentTimeMillis();
             Float predictedTemperature = predictionService.predict(currentTemperature, currentHumidity, currentPressure);
-            System.out.println("传感器 [" + sensorName + " (" + sensorId + ")] 单点预测温度: " + (predictedTemperature != null ? String.format("%.2f", predictedTemperature) + "°C" : "N/A"));
+            long predictEnd = System.currentTimeMillis();
+            System.out.println("  预测服务耗时: " + (predictEnd - predictStart) + "ms, 预测温度: " + (predictedTemperature != null ? String.format("%.2f", predictedTemperature) + "°C" : "N/A"));
 
-
-            // 3. 调用报警服务 (传入 sensorId 以便 AlarmService 获取动态阈值)
+            // 3. 调用报警服务
+            long alarmStart = System.currentTimeMillis();
             boolean isAlarm = alarmService.checkAlarm(sensorId, currentTemperature, predictedTemperature);
+            long alarmEnd = System.currentTimeMillis();
+            System.out.println("  报警检查耗时: " + (alarmEnd - alarmStart) + "ms, 是否报警: " + isAlarm);
 
             // 4. 创建SensorData实体
             SensorData sensorData = new SensorData();
@@ -188,37 +195,31 @@ public class TemperaturePollingService {
             sensorData.setPredictedTemperature(predictedTemperature);
             sensorData.setAlarmTriggered(isAlarm);
             sensorData.setAlarmMessage(alarmService.getAlarmMessage(sensorId, sensorName, currentTemperature, predictedTemperature));
+            sensorData.setStorageLevel("REALTIME");
 
-            // ==================== 设置 storageLevel ====================
-            sensorData.setStorageLevel("REALTIME"); // 标记为实时数据
-            // ==========================================================
-
-            if (isAlarm) {
-                System.err.println("!!! 传感器 [" + sensorName + " (" + sensorId + ")] 实时报警 !!! " + sensorData.getAlarmMessage());
-            }
-
-            // 5. 保存到本地数据库 (isUploaded 初始为 false)
+            // 5. 保存到本地数据库
+            long dbSaveStart = System.currentTimeMillis();
             sensorData.setUploaded(false); // 明确设置为 false，等待上传
             sensorDataRepository.save(sensorData);
-            System.out.println("传感器 [" + sensorName + " (" + sensorId + ")] 数据已保存到本地数据库: " + sensorData.getId() + ", Level: " + sensorData.getStorageLevel());
-            latestCompleteSensorDataMap.get(sensorId).set(sensorData); // 更新最新的完整 SensorData 对象到缓存
-            latestSensorDataMap.get(sensorId).set(new Sample(currentTemperature, Instant.now())); // 更新最新的原始值到缓存
+            long dbSaveEnd = System.currentTimeMillis();
+            System.out.println("  本地数据库保存耗时: " + (dbSaveEnd - dbSaveStart) + "ms, ID: " + sensorData.getId());
 
-            // 6. **立即通过 A 通道上传最新采集的原始数据。**
-            boolean uploadSuccess = cloudUploadService.uploadData(sensorData); // 直接上传 SensorData 对象
-            if (uploadSuccess) {
-                sensorData.setUploaded(true); // 上传成功，更新本地状态
-                sensorDataRepository.save(sensorData); // 持久化上传状态
-                System.out.println("传感器 [" + sensorName + " (" + sensorId + ")] 最新数据通过 A 通道上传成功。");
-            } else {
-                System.err.println("传感器 [" + sensorName + " (" + sensorId + ")] 最新数据通过 A 通道上传失败，将在后续批量任务中重试。");
-            }
+            // 6. 提交异步上传任务
+            long uploadSubmitStart = System.currentTimeMillis();
+            cloudUploadService.uploadData(sensorData); // 现在是异步调用
+            long uploadSubmitEnd = System.currentTimeMillis();
+            System.out.println("  异步上传任务提交耗时: " + (uploadSubmitEnd - uploadSubmitStart) + "ms");
+            System.out.println("传感器 [" + sensorName + " (" + sensorId + ")] 最新数据已提交给异步上传通道。");
+
+            long overallEnd = System.currentTimeMillis();
+            System.out.println("--- 传感器 [" + sensorName + " (" + sensorId + ")] 轮询处理总耗时 (不含异步上传实际执行): " + (overallEnd - overallStart) + "ms ---");
 
         } catch (Exception e) {
             System.err.println("轮询或处理传感器 [" + sensorName + " (" + sensorId + ")] 数据时发生错误: " + e.getMessage());
             e.printStackTrace();
         }
     }
+
 
 
     // 定时批量上传所有未上传的数据 (包括实时和聚合数据)

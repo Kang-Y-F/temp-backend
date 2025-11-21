@@ -30,7 +30,7 @@ public class JSerialCommWrapper implements SerialPortWrapper {
         port.setNumStopBits(stopBits == 2 ? SerialPort.TWO_STOP_BITS : SerialPort.ONE_STOP_BIT);
         port.setParity(parity == 1 ? SerialPort.ODD_PARITY :
                 (parity == 2 ? SerialPort.EVEN_PARITY : SerialPort.NO_PARITY));
-        port.setComPortTimeouts(SerialPort.TIMEOUT_READ_BLOCKING, 1000, 1000);
+        port.setComPortTimeouts(SerialPort.TIMEOUT_READ_BLOCKING, 100, 100);
         if (!port.openPort()) {
             throw new Exception("Open serial port failed: " + portId);
         }

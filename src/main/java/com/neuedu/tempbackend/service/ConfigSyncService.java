@@ -4,6 +4,7 @@ import com.neuedu.tempbackend.config.ModbusProperties;
 import com.neuedu.tempbackend.model.EdgeConfig;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -49,6 +50,7 @@ public class ConfigSyncService {
      * 可以配置在 application.yml 中：cloud.config.syncIntervalMs=300000
      */
     @Scheduled(fixedDelayString = "${cloud.config.syncIntervalMs:300000}") // 默认每5分钟
+    @Async("cloudConfigSyncExecutor")
     public void syncConfigFromCloud() {
         System.out.println("开始从云端同步配置...");
         try {

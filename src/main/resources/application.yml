@@ -25,7 +25,7 @@ spring:
       path: /h2-console # 控制台的访问路径，默认为 /h2-console
 
 server:
-  port: 8080
+  port: 8081
 
 # ==================== 重点：多串口 + 多传感器配置 ====================
 modbus:
@@ -36,13 +36,14 @@ modbus:
     stopBits: 1
     parity: 0      # 0=None
     encoding: RTU
-    pollIntervalMs: 1000   # 全局轮询间隔，用于实时采集
+    pollIntervalMs: 100  # 全局轮询间隔，用于实时采集
 
     # ------------------ 多个物理串口定义 ------------------
     connections:
       # 串口1：纯温度传感器 × 3
       - name: "temp-only"               # 内部引用名，随便起
         port: "COM8"
+#        port: "/dev/ttyACM0"
         baudRate: 57600                 # 可单独覆盖全局
 
       # 串口2：温湿度+气压一体传感器 × 3
@@ -53,16 +54,16 @@ modbus:
     # ------------------ 所有传感器列表 ------------------
     sensors:
       # ---------- 串口1：3个纯温度传感器 ----------
-      - sensorId: "cold-room-01"
-        sensorName: "冷藏库1号"
-        connection: "temp-only"        # 对应上面 connections 的 name
-        slaveId: 1
-        temperature:
-          registerType: "holding"      # holding 或 input
-          address: 0
-          dataType: 5                  # 5=FOUR_BYTE_INT_SIGNED（32位有符号），根据实际传感器手册改
-          scale: 0.0001
-          byteOrder: "ABCD"
+#      - sensorId: "cold-room-01"
+#        sensorName: "冷藏库1号"
+#        connection: "temp-only"        # 对应上面 connections 的 name
+#        slaveId: 1
+#        temperature:
+#          registerType: "holding"      # holding 或 input
+#          address: 0
+#          dataType: 5                  # 5=FOUR_BYTE_INT_SIGNED（32位有符号），根据实际传感器手册改
+#          scale: 0.0001
+#          byteOrder: "ABCD"
 
       - sensorId: "cold-room-02"
         sensorName: "冷藏库2号"
@@ -176,16 +177,26 @@ alarm:
     lower: 5.0
     deviation: 3.0
 
+#cloud:
+#  upload:
+#    url: http://localhost:8080/api/sensor-data # 指向 mockcloud 的单条数据上传接口
+#    batchSize: 50
+#    batchIntervalMs: 60000
+#cloud.config.url: http://localhost:8080/api/device/{deviceId}/config # 指向 mockcloud 的配置获取接口
+
 cloud:
   upload:
-    url: http://your-cloud-backend.com/api/sensor-data
+    url: http://100.79.184.120:8080/api/sensor-data # 指向朋友电脑的 Mock Cloud 的上传接口
     batchSize: 50
-    batchIntervalMs: 60000 # 批量上传间隔，例如每 1 分钟
+    batchIntervalMs: 60000
+  config:
+    url: http://100.79.184.120:8080/api/device/{deviceId}/config # 指向朋友电脑的 Mock Cloud 的配置接口
+
 
 data:
   compaction:
     intervalMs: 60000 # 数据稀疏化任务每隔 1 分钟执行一次
   retention: # 数据保留策略
-    realtimeMinutes: 1 # 秒级数据保留时长 (REALTIME)
+    realtimeMinutes: 20 # 秒级数据保留时长 (REALTIME)
     minutelyHours: 24 # 分钟级数据保留时长 (MINUTELY_COMPACTED)
     hourlyDays: 7 # 小时级数据保留时长 (HOURLY_COMPACTED)

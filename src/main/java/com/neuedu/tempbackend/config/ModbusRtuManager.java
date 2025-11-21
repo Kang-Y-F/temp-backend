@@ -87,8 +87,8 @@ public class ModbusRtuManager implements DisposableBean {
             System.out.println("Creating RTU master for port: " + port);
         }
 
-        master.setTimeout(2000); // 设置超时时间
-        master.setRetries(1);    // 设置重试次数
+        master.setTimeout(1500); // 设置超时时间
+        master.setRetries(0);    // 设置重试次数
         master.init();           // 初始化
         return master;
     }
