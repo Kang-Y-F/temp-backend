@@ -16,11 +16,23 @@ public class ModbusProperties {
     private Serial serial = new Serial(); // 包含了 connections 和 sensors
     private long pollIntervalMs = 100; // 全局默认轮询间隔，可被单个传感器覆盖
 
+    // 新增：Modbus Master 的全局超时和重试设置
+    private Integer timeout; // Modbus Master 超时时间（毫秒）
+    private Integer retries; // Modbus Master 重试次数
+
     public Serial getSerial() { return serial; }
     public void setSerial(Serial serial) { this.serial = serial; }
 
     public long getPollIntervalMs() { return pollIntervalMs; }
     public void setPollIntervalMs(long pollIntervalMs) { this.pollIntervalMs = pollIntervalMs; }
+
+    // 新增 getter/setter
+    public Integer getTimeout() { return timeout; }
+    public void setTimeout(Integer timeout) { this.timeout = timeout; }
+
+    public Integer getRetries() { return retries; }
+    public void setRetries(Integer retries) { this.retries = retries; }
+
 
     // ==================== 内部类映射 YAML 结构 ====================
 

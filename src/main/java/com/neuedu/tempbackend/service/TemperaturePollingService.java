@@ -27,7 +27,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.LinkedHashMap; // 导入 LinkedHashMap
-import java.time.ZoneOffset;
+// import java.time.ZoneOffset; // 移除重复导入
 
 @Service
 public class TemperaturePollingService {
@@ -91,7 +91,9 @@ public class TemperaturePollingService {
                 continue;
             }
 
-            long initialDelay = Optional.ofNullable(sensorProp.getPollIntervalMs()).orElse(modbusProperties.getPollIntervalMs());
+            // 使用modbusProperties.getPollIntervalMs() 作为默认全局轮询间隔
+            long initialDelay = Optional.ofNullable(sensorProp.getPollIntervalMs())
+                    .orElse(modbusProperties.getPollIntervalMs()); // 确保这里获取的是 ModbusProperties 根级别的 pollIntervalMs
 
             latestSensorDataMap.put(sensorId, new AtomicReference<>(new Sample(Double.NaN, Instant.EPOCH)));
             latestCompleteSensorDataMap.put(sensorId, new AtomicReference<>(new SensorData()));
@@ -154,17 +156,40 @@ public class TemperaturePollingService {
         try {
             System.out.println("--- 开始轮询传感器 [" + sensorName + " (" + sensorId + ")]，线程: " + Thread.currentThread().getName() + " ---");
 
-            // 1. 读取传感器数据
-            long modbusStart = System.currentTimeMillis();
-            Optional<Float> tempOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getTemperature());
-            Optional<Float> humidityOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getHumidity());
-            Optional<Float> pressureOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getPressure());
-            long modbusEnd = System.currentTimeMillis();
-            System.out.println("  Modbus读取耗时: " + (modbusEnd - modbusStart) + "ms");
+            // --- 修改点：在调用 manager.readSensorRegister 之前添加 null 检查 ---
+            // 1. 读取温度
+            Optional<Float> tempOpt = Optional.empty();
+            if (sensorProp.getTemperature() != null) { // 只有温度配置存在时才去读取
+                tempOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getTemperature());
+            } else {
+                System.out.println("  传感器 [" + sensorName + " (" + sensorId + ")] 未配置温度寄存器。");
+            }
 
+            // 2. 读取湿度
+            Optional<Float> humidityOpt = Optional.empty();
+            if (sensorProp.getHumidity() != null) { // 只有湿度配置存在时才去读取
+                humidityOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getHumidity());
+            } else {
+                System.out.println("  传感器 [" + sensorName + " (" + sensorId + ")] 未配置湿度寄存器。");
+            }
+
+            // 3. 读取压力
+            Optional<Float> pressureOpt = Optional.empty();
+            if (sensorProp.getPressure() != null) { // 只有压力配置存在时才去读取
+                pressureOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getPressure());
+            } else {
+                System.out.println("  传感器 [" + sensorName + " (" + sensorId + ")] 未配置压力寄存器。");
+            }
+            // --- 修改点结束 ---
+
+            long modbusEnd = System.currentTimeMillis();
+            System.out.println("  Modbus读取耗时: " + (modbusEnd - overallStart) + "ms"); // 这里从 overallStart 算，包含 null 检查的开销
+
+            // 如果温度未配置或读取失败，则整个处理流程可能无法继续，这取决于你的业务逻辑
+            // 当前逻辑是如果温度为空就跳过后续处理
             if (sensorProp.getTemperature() == null || tempOpt.isEmpty()) {
-                System.err.println("传感器 [" + sensorName + " (" + sensorId + ")] 未配置或未读取到有效温度数据，跳过本次处理。");
-                return;
+                System.err.println("传感器 [" + sensorName + " (" + sensorId + ")] 温度未配置或未读取到有效数据，跳过本次处理。");
+                return; // 跳过后续的预测、报警、保存等步骤
             }
 
             Float currentTemperature = tempOpt.get();
@@ -219,7 +244,6 @@ public class TemperaturePollingService {
             e.printStackTrace();
         }
     }
-
 
 
     // 定时批量上传所有未上传的数据 (包括实时和聚合数据)

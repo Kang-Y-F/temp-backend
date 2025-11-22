@@ -30,20 +30,22 @@ server:
 # ==================== 重点：多串口 + 多传感器配置 ====================
 modbus:
   # 全局默认串口参数（下面没单独写的都会继承这里）
+  timeout: 1500 # 毫秒。建议根据Modbus设备的响应速度和网络环境调整
+  retries: 0    # 重试次数。对于串行Modbus，通常设置为0或1。
+  pollIntervalMs: 100
   serial:
     baudRate: 57600
     dataBits: 8
     stopBits: 1
     parity: 0      # 0=None
     encoding: RTU
-    pollIntervalMs: 100  # 全局轮询间隔，用于实时采集
 
     # ------------------ 多个物理串口定义 ------------------
     connections:
       # 串口1：纯温度传感器 × 3
       - name: "temp-only"               # 内部引用名，随便起
         port: "COM8"
-#        port: "/dev/ttyACM0"
+#        port: "ttyACM0"
         baudRate: 57600                 # 可单独覆盖全局
 
       # 串口2：温湿度+气压一体传感器 × 3
@@ -164,8 +166,8 @@ edge:
 
 prediction:
   service:
-    url: http://localhost:5000/predict
-    trendUrl: http://localhost:5000/predict_trend
+    url: http://100.92.38.54:5000/predict
+    trendUrl: http://100.92.38.54:5000/predict_trend
   trend:
     checkIntervalMs: 30000 # 趋势预测检查间隔，例如每 30 秒
     historyMinutes: 10     # 预测模型输入需要的回溯历史数据时长（分钟），例如过去 10 分钟
@@ -177,20 +179,20 @@ alarm:
     lower: 5.0
     deviation: 3.0
 
-#cloud:
-#  upload:
-#    url: http://localhost:8080/api/sensor-data # 指向 mockcloud 的单条数据上传接口
-#    batchSize: 50
-#    batchIntervalMs: 60000
-#cloud.config.url: http://localhost:8080/api/device/{deviceId}/config # 指向 mockcloud 的配置获取接口
-
 cloud:
   upload:
-    url: http://100.79.184.120:8080/api/sensor-data # 指向朋友电脑的 Mock Cloud 的上传接口
+    url: http://100.92.38.54:8080/api/sensor-data # 指向 mockcloud 的单条数据上传接口
     batchSize: 50
     batchIntervalMs: 60000
-  config:
-    url: http://100.79.184.120:8080/api/device/{deviceId}/config # 指向朋友电脑的 Mock Cloud 的配置接口
+cloud.config.url: http://100.92.38.54:8080/api/device/{deviceId}/config # 指向 mockcloud 的配置获取接口
+
+#cloud:
+#  upload:
+#    url: http://100.79.184.120:8080/api/sensor-data # 指向朋友电脑的 Mock Cloud 的上传接口
+#    batchSize: 50
+#    batchIntervalMs: 60000
+#  config:
+#    url: http://100.79.184.120:8080/api/device/{deviceId}/config # 指向朋友电脑的 Mock Cloud 的配置接口
 
 
 data:
