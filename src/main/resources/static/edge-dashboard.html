@@ -1,0 +1,1251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <title>边缘测监控大屏</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <!-- Chart.js 用于绘图 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        :root {
+            --bg-dark: #050816;
+            --bg-card: #0b1020;
+            --bg-card-soft: #151a2c;
+            --accent: #4f46e5;
+            --accent-soft: rgba(79, 70, 229, 0.18);
+            --accent-strong: rgba(129, 140, 248, 0.35);
+            --text-main: #e5e7eb;
+            --text-muted: #9ca3af;
+            --border-subtle: rgba(148, 163, 184, 0.15);
+            --danger: #f97373;
+            --success: #4ade80;
+            --warning: #facc15;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body {
+            height: 100%;
+            background: radial-gradient(circle at top, #111827 0, #020617 55%, #000 100%);
+            color: var(--text-main);
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .app-shell {
+            display: flex;
+            flex: 1;
+            min-height: 0;
+            padding: 16px;
+            gap: 16px;
+        }
+
+        /* 顶部栏 */
+        .top-bar {
+            padding: 10px 16px 0 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .top-title {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .top-title h1 {
+            font-size: 20px;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .top-title h1 span.dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: radial-gradient(circle at 30% 30%, #6ee7b7 0, #22c55e 50%, #15803d 100%);
+            box-shadow: 0 0 10px rgba(34, 197, 94, 0.8);
+        }
+
+        .top-title small {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .top-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .pill {
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            font-size: 11px;
+            color: var(--text-muted);
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .pill-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 999px;
+            background: var(--success);
+            box-shadow: 0 0 6px rgba(34, 197, 94, 0.7);
+        }
+
+        .btn-ghost {
+            border-radius: 999px;
+            border: 1px solid rgba(148, 163, 184, 0.3);
+            background: rgba(15, 23, 42, 0.8);
+            color: var(--text-main);
+            padding: 6px 14px;
+            font-size: 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            transition: all 0.16s ease-out;
+        }
+
+        .btn-ghost:hover {
+            border-color: rgba(129, 140, 248, 0.8);
+            background: radial-gradient(circle at 0 0, rgba(129, 140, 248, 0.25), rgba(15, 23, 42, 0.9));
+            transform: translateY(-1px);
+        }
+
+        /* 左侧：传感器列表 */
+        .sidebar {
+            width: 270px;
+            min-width: 240px;
+            background: linear-gradient(145deg, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.96));
+            border-radius: 16px;
+            border: 1px solid var(--border-subtle);
+            box-shadow:
+                    0 18px 45px rgba(15, 23, 42, 0.9),
+                    0 0 0 1px rgba(15, 23, 42, 0.9),
+                    0 0 40px rgba(79, 70, 229, 0.25);
+            padding: 14px 14px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .sidebar-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sidebar-header h2 {
+            font-size: 13px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        .sidebar-header small {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .sensor-list {
+            flex: 1;
+            overflow-y: auto;
+            padding-right: 4px;
+            margin-top: 4px;
+        }
+
+        .sensor-item {
+            border-radius: 12px;
+            padding: 8px 10px;
+            margin-bottom: 6px;
+            background: radial-gradient(circle at 0 0, rgba(15, 23, 42, 0.85), rgba(15, 23, 42, 0.95));
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: all 0.15s ease-out;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .sensor-item:hover {
+            border-color: rgba(148, 163, 184, 0.6);
+            background: radial-gradient(circle at 0 0, rgba(30, 64, 175, 0.28), rgba(15, 23, 42, 0.96));
+            transform: translateY(-1px);
+        }
+
+        .sensor-item.active {
+            border-color: rgba(129, 140, 248, 0.9);
+            box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.5);
+            background:
+                    radial-gradient(circle at 0 0, rgba(129, 140, 248, 0.4), rgba(15, 23, 42, 0.98));
+        }
+
+        .sensor-main {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .sensor-name {
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .sensor-id {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .sensor-meta {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 4px;
+        }
+
+        .sensor-temp-tag {
+            font-size: 12px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: rgba(15, 118, 110, 0.25);
+            color: #6ee7b7;
+            border: 1px solid rgba(45, 212, 191, 0.5);
+        }
+
+        .sensor-status-dot {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .sensor-status-dot span.dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 999px;
+            background: var(--success);
+            box-shadow: 0 0 5px rgba(34, 197, 94, 0.8);
+        }
+
+        .sidebar-footer {
+            padding-top: 4px;
+            border-top: 1px solid rgba(30, 64, 175, 0.4);
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .sidebar-footer small {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        /* 右侧内容：头部 + 卡片 + 图表 + 表格 */
+        .main {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .main-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .main-header-title {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .main-header-title h2 {
+            font-size: 16px;
+            font-weight: 500;
+        }
+
+        .main-header-title small {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .main-header-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .metric-pills {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 8px;
+            border-radius: 999px;
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid var(--border-subtle);
+        }
+
+        .metric-pill {
+            font-size: 11px;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 3px 8px;
+            border-radius: 999px;
+            transition: all 0.14s;
+        }
+
+        .metric-pill.active {
+            background: rgba(129, 140, 248, 0.16);
+            color: #e0e7ff;
+        }
+
+        /* 三个数据卡片 */
+        .cards-row {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .card {
+            background: radial-gradient(circle at 0 0, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.98));
+            border-radius: 14px;
+            border: 1px solid var(--border-subtle);
+            padding: 10px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: "";
+            position: absolute;
+            inset: -40%;
+            background:
+                    radial-gradient(circle at 0 0, var(--accent-soft), transparent 65%),
+                    radial-gradient(circle at 100% 0, rgba(56, 189, 248, 0.12), transparent 60%);
+            opacity: 0.35;
+            pointer-events: none;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            color: var(--text-muted);
+            z-index: 1;
+        }
+
+        .card-value {
+            font-size: 22px;
+            font-weight: 600;
+            display: flex;
+            align-items: baseline;
+            gap: 4px;
+            z-index: 1;
+        }
+
+        .card-value span.unit {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .card-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            color: var(--text-muted);
+            z-index: 1;
+        }
+
+        .trend-chip {
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: rgba(15, 118, 110, 0.2);
+            color: #6ee7b7;
+            border: 1px solid rgba(45, 212, 191, 0.4);
+        }
+
+        .trend-chip.down {
+            background: rgba(185, 28, 28, 0.2);
+            color: #fecaca;
+            border-color: rgba(248, 113, 113, 0.6);
+        }
+
+        /* 图表卡片 */
+        .chart-card {
+            background: radial-gradient(circle at 0 0, rgba(15, 23, 42, 0.95), rgba(15, 23, 42, 0.99));
+            border-radius: 16px;
+            border: 1px solid rgba(55, 65, 81, 0.7);
+            padding: 10px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            position: relative;
+            overflow: hidden;
+            box-shadow:
+                    0 18px 50px rgba(15, 23, 42, 0.9),
+                    0 0 0 1px rgba(15, 23, 42, 0.9),
+                    0 0 50px rgba(37, 99, 235, 0.25);
+        }
+
+        .chart-card::before {
+            content: "";
+            position: absolute;
+            inset: -40%;
+            background:
+                    radial-gradient(circle at 10% 0, rgba(129, 140, 248, 0.25), transparent 60%),
+                    radial-gradient(circle at 90% 0, rgba(45, 212, 191, 0.2), transparent 55%);
+            opacity: 0.35;
+            pointer-events: none;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 1;
+        }
+
+        .chart-header-main {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .chart-header-main h3 {
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .chart-header-main small {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .chart-header-right {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .chart-header-right small {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .chart-body {
+            position: relative;
+            z-index: 1;
+            height: 220px;
+        }
+
+        /* 表格卡片 */
+        .table-card {
+            background: radial-gradient(circle at 0 0, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.99));
+            border-radius: 16px;
+            border: 1px solid rgba(55, 65, 81, 0.7);
+            padding: 10px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .table-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .table-header h3 {
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .table-header small {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .table-wrapper {
+            max-height: 220px;
+            overflow: auto;
+            border-radius: 10px;
+            border: 1px solid rgba(31, 41, 55, 0.8);
+            background: rgba(15, 23, 42, 0.9);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+        }
+
+        thead {
+            background: linear-gradient(to right, rgba(30, 64, 175, 0.4), rgba(15, 23, 42, 0.95));
+            position: sticky;
+            top: 0;
+            z-index: 2;
+        }
+
+        th, td {
+            padding: 6px 8px;
+            text-align: left;
+            white-space: nowrap;
+        }
+
+        th {
+            font-weight: 500;
+            color: #e5e7eb;
+            border-bottom: 1px solid rgba(31, 41, 55, 0.8);
+        }
+
+        tbody tr:nth-child(even) {
+            background: rgba(15, 23, 42, 0.75);
+        }
+
+        tbody tr:nth-child(odd) {
+            background: rgba(15, 23, 42, 0.95);
+        }
+
+        tbody tr:hover {
+            background: rgba(30, 64, 175, 0.6);
+        }
+
+        td {
+            color: var(--text-muted);
+        }
+
+        .badge {
+            padding: 1px 7px;
+            border-radius: 999px;
+            font-size: 10px;
+            border: 1px solid rgba(148, 163, 184, 0.6);
+        }
+
+        .badge.alarm-true {
+            background: rgba(248, 113, 113, 0.18);
+            color: #fecaca;
+            border-color: rgba(239, 68, 68, 0.8);
+        }
+
+        .badge.alarm-false {
+            background: rgba(22, 163, 74, 0.18);
+            color: #bbf7d0;
+            border-color: rgba(34, 197, 94, 0.8);
+        }
+
+        .badge.level {
+            background: rgba(30, 64, 175, 0.3);
+            border-color: rgba(129, 140, 248, 0.7);
+            color: #bfdbfe;
+        }
+
+        /* 底部状态条 */
+        .status-bar {
+            padding: 6px 16px 12px;
+            font-size: 11px;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status-bar span {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: var(--success);
+            box-shadow: 0 0 6px rgba(34, 197, 94, 0.8);
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            right: 16px;
+            bottom: 16px;
+            padding: 10px 14px;
+            border-radius: 12px;
+            background: rgba(15, 23, 42, 0.97);
+            border: 1px solid rgba(248, 113, 113, 0.6);
+            color: #fecaca;
+            font-size: 12px;
+            display: none;
+            box-shadow: 0 14px 35px rgba(15, 23, 42, 0.95);
+            z-index: 9999;
+        }
+
+        /* 响应式稍微照顾一下窄屏 */
+        @media (max-width: 900px) {
+            .app-shell {
+                flex-direction: column;
+            }
+            .sidebar {
+                width: 100%;
+                min-width: 100%;
+                order: 2;
+            }
+            .main {
+                order: 1;
+            }
+            .cards-row {
+                grid-template-columns: repeat(1, minmax(0, 1fr));
+            }
+        }
+    </style>
+</head>
+<body>
+<!-- 顶部条 -->
+<div class="top-bar">
+    <div class="top-title">
+        <h1>
+            <span class="dot"></span>
+            边缘测 · 实时监控
+        </h1>
+        <small id="subtitle">等待选择传感器...</small>
+    </div>
+    <div class="top-actions">
+        <div class="pill">
+            <span class="pill-dot"></span>
+            <span id="pollingInfo">轮询中...</span>
+        </div>
+        <button class="btn-ghost" id="refreshBtn">
+            ⟳ 手动刷新
+        </button>
+    </div>
+</div>
+
+<div class="app-shell">
+    <!-- 左侧传感器列表 -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h2>EDGE SENSORS</h2>
+            <small id="sensorCount">0 个已配置</small>
+        </div>
+
+        <div class="sensor-list" id="sensorList">
+            <!-- 动态填充 -->
+        </div>
+
+        <div class="sidebar-footer">
+            <small id="lastUpdated">上次数据更新时间：--</small>
+            <small>提示：点击左侧传感器，可查看最新数据与历史曲线。</small>
+        </div>
+    </aside>
+
+    <!-- 右侧主区域 -->
+    <main class="main">
+        <div class="main-header">
+            <div class="main-header-title">
+                <h2 id="selectedSensorTitle">未选择传感器</h2>
+                <small id="selectedSensorMeta">请选择左侧列表中的一个传感器</small>
+            </div>
+            <div class="main-header-right">
+                <div class="metric-pills">
+                    <span class="metric-pill active" data-metric="temperature">温度</span>
+                    <span class="metric-pill" data-metric="humidity">湿度</span>
+                    <span class="metric-pill" data-metric="pressure">气压</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="cards-row">
+            <div class="card" id="card-temp">
+                <div class="card-header">
+                    <span>当前温度</span>
+                    <small id="cardTempTime">--</small>
+                </div>
+                <div class="card-value">
+                    <span id="cardTempValue">--</span>
+                    <span class="unit">℃</span>
+                </div>
+                <div class="card-footer">
+                    <span>预测下一时刻：<span id="cardTempPredict">--</span> ℃</span>
+                    <span id="cardTempTrend" class="trend-chip">趋势: --</span>
+                </div>
+            </div>
+
+            <div class="card" id="card-humidity">
+                <div class="card-header">
+                    <span>当前湿度</span>
+                    <small id="cardHumidityTime">--</small>
+                </div>
+                <div class="card-value">
+                    <span id="cardHumidityValue">--</span>
+                    <span class="unit">%RH</span>
+                </div>
+                <div class="card-footer">
+                    <span>数据来源：<span id="cardHumidityLevel">--</span></span>
+                    <span id="cardHumidityExtra">最近 10 分钟平均：--</span>
+                </div>
+            </div>
+
+            <div class="card" id="card-pressure">
+                <div class="card-header">
+                    <span>当前气压</span>
+                    <small id="cardPressureTime">--</small>
+                </div>
+                <div class="card-value">
+                    <span id="cardPressureValue">--</span>
+                    <span class="unit">hPa</span>
+                </div>
+                <div class="card-footer">
+                        <span>报警状态：
+                            <span id="cardAlarmStatus" class="badge alarm-false">未知</span>
+                        </span>
+                    <span id="cardAlarmMsg">--</span>
+                </div>
+            </div>
+        </div>
+
+        <section class="chart-card">
+            <div class="chart-header">
+                <div class="chart-header-main">
+                    <h3 id="chartTitle">历史曲线</h3>
+                    <small id="chartSubtitle">最近若干条数据</small>
+                </div>
+                <div class="chart-header-right">
+                    <small id="chartMeta">--</small>
+                </div>
+            </div>
+            <div class="chart-body">
+                <canvas id="historyChart"></canvas>
+            </div>
+        </section>
+
+        <section class="table-card">
+            <div class="table-header">
+                <div>
+                    <h3>最近数据记录</h3>
+                    <small>包含 REALTIME / MINUTELY_COMPACTED / HOURLY_COMPACTED</small>
+                </div>
+            </div>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                    <tr>
+                        <th>时间</th>
+                        <th>温度(℃)</th>
+                        <th>湿度(%RH)</th>
+                        <th>气压(hPa)</th>
+                        <th>级别</th>
+                        <th>报警</th>
+                    </tr>
+                    </thead>
+                    <tbody id="dataTableBody">
+                    <!-- 动态填充 -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+</div>
+
+<div class="status-bar">
+        <span>
+            <span class="status-dot"></span>
+            边缘设备运行中 · API: /api/edge
+        </span>
+    <span id="statusText">等待加载传感器列表...</span>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+    const API_BASE = "/api/edge";
+
+    let sensors = [];
+    let selectedSensorId = null;
+    let currentMetric = "temperature";
+    let chartInstance = null;
+    let lastRecentData = [];
+
+    const sensorListEl = document.getElementById("sensorList");
+    const sensorCountEl = document.getElementById("sensorCount");
+    const subtitleEl = document.getElementById("subtitle");
+    const lastUpdatedEl = document.getElementById("lastUpdated");
+    const selectedSensorTitleEl = document.getElementById("selectedSensorTitle");
+    const selectedSensorMetaEl = document.getElementById("selectedSensorMeta");
+    const statusTextEl = document.getElementById("statusText");
+    const toastEl = document.getElementById("toast");
+    const refreshBtn = document.getElementById("refreshBtn");
+
+    const cardTempValueEl = document.getElementById("cardTempValue");
+    const cardTempTimeEl = document.getElementById("cardTempTime");
+    const cardTempPredictEl = document.getElementById("cardTempPredict");
+    const cardTempTrendEl = document.getElementById("cardTempTrend");
+
+    const cardHumidityValueEl = document.getElementById("cardHumidityValue");
+    const cardHumidityTimeEl = document.getElementById("cardHumidityTime");
+    const cardHumidityLevelEl = document.getElementById("cardHumidityLevel");
+    const cardHumidityExtraEl = document.getElementById("cardHumidityExtra");
+
+    const cardPressureValueEl = document.getElementById("cardPressureValue");
+    const cardPressureTimeEl = document.getElementById("cardPressureTime");
+    const cardAlarmStatusEl = document.getElementById("cardAlarmStatus");
+    const cardAlarmMsgEl = document.getElementById("cardAlarmMsg");
+
+    const chartTitleEl = document.getElementById("chartTitle");
+    const chartSubtitleEl = document.getElementById("chartSubtitle");
+    const chartMetaEl = document.getElementById("chartMeta");
+    const dataTableBodyEl = document.getElementById("dataTableBody");
+
+    function showToast(message) {
+        toastEl.textContent = message;
+        toastEl.style.display = "block";
+        setTimeout(() => {
+            toastEl.style.display = "none";
+        }, 3500);
+    }
+
+    function formatDateTime(str) {
+        if (!str) return "--";
+        try {
+            const d = new Date(str);
+            if (isNaN(d.getTime())) return str;
+            return d.toLocaleString();
+        } catch (e) {
+            return str;
+        }
+    }
+
+    function formatNumber(n, digits = 1) {
+        if (n === null || n === undefined || isNaN(n)) return "--";
+        return Number(n).toFixed(digits);
+    }
+
+    async function fetchJson(url) {
+        const resp = await fetch(url);
+        if (!resp.ok) {
+            throw new Error("HTTP " + resp.status);
+        }
+        return await resp.json();
+    }
+
+    async function loadSensors() {
+        try {
+            statusTextEl.textContent = "正在加载传感器列表...";
+            const data = await fetchJson(`${API_BASE}/sensors`);
+            sensors = data || [];
+            sensorCountEl.textContent = `${sensors.length} 个已配置`;
+            renderSensorList();
+
+            if (sensors.length > 0) {
+                selectSensor(sensors[0].sensorId);
+            } else {
+                statusTextEl.textContent = "未在 application.yml 中发现传感器配置。";
+            }
+        } catch (e) {
+            console.error(e);
+            showToast("加载传感器列表失败，请检查后端服务是否正常。");
+            statusTextEl.textContent = "加载传感器失败。";
+        }
+    }
+
+    function renderSensorList() {
+        sensorListEl.innerHTML = "";
+        sensors.forEach(s => {
+            const div = document.createElement("div");
+            div.className = "sensor-item" + (s.sensorId === selectedSensorId ? " active" : "");
+            div.dataset.sensorId = s.sensorId;
+
+            const main = document.createElement("div");
+            main.className = "sensor-main";
+
+            const nameEl = document.createElement("div");
+            nameEl.className = "sensor-name";
+            nameEl.textContent = s.sensorName || s.sensorId;
+
+            const idEl = document.createElement("div");
+            idEl.className = "sensor-id";
+            idEl.textContent = s.sensorId;
+
+            main.appendChild(nameEl);
+            main.appendChild(idEl);
+
+            const meta = document.createElement("div");
+            meta.className = "sensor-meta";
+
+            const tempTag = document.createElement("span");
+            tempTag.className = "sensor-temp-tag";
+            tempTag.textContent = "Modbus #" + (s.slaveId ?? "?");
+
+            const statusLine = document.createElement("span");
+            statusLine.className = "sensor-status-dot";
+            const dot = document.createElement("span");
+            dot.className = "dot";
+            statusLine.appendChild(dot);
+            const text = document.createElement("span");
+            text.textContent = "正常";
+            statusLine.appendChild(text);
+
+            meta.appendChild(tempTag);
+            meta.appendChild(statusLine);
+
+            div.appendChild(main);
+            div.appendChild(meta);
+
+            div.addEventListener("click", () => {
+                selectSensor(s.sensorId);
+            });
+
+            sensorListEl.appendChild(div);
+        });
+    }
+
+    async function selectSensor(sensorId) {
+        selectedSensorId = sensorId;
+        renderSensorList();
+
+        const sensor = sensors.find(s => s.sensorId === sensorId);
+        selectedSensorTitleEl.textContent = sensor ? (sensor.sensorName || sensor.sensorId) : sensorId;
+        selectedSensorMetaEl.textContent = sensor
+            ? `ID: ${sensor.sensorId} · 串口连接: ${sensor.connection || "?"} · 从站 ID: ${sensor.slaveId ?? "?"}`
+            : "";
+
+        subtitleEl.textContent = `当前传感器：${selectedSensorTitleEl.textContent}`;
+
+        await refreshCurrentSensorData();
+    }
+
+    async function refreshCurrentSensorData() {
+        if (!selectedSensorId) return;
+        statusTextEl.textContent = `正在刷新 ${selectedSensorId} 的最新数据...`;
+
+        try {
+            const [latest, recent] = await Promise.all([
+                fetchJson(`${API_BASE}/sensors/${encodeURIComponent(selectedSensorId)}/latest`),
+                fetchJson(`${API_BASE}/sensors/${encodeURIComponent(selectedSensorId)}/recent?limit=200`)
+            ]);
+
+            lastRecentData = recent || [];
+            updateLatestCards(latest);
+            updateChart();
+            updateTable();
+
+            const now = new Date();
+            lastUpdatedEl.textContent = "上次数据更新时间：" + now.toLocaleString();
+            statusTextEl.textContent = `已刷新 ${selectedSensorId} 的数据 (${lastRecentData.length} 条记录)。`;
+        } catch (e) {
+            console.error(e);
+            showToast("刷新当前传感器数据失败，请检查边缘服务或数据库。");
+            statusTextEl.textContent = "刷新数据失败。";
+        }
+    }
+
+    function updateLatestCards(latest) {
+        if (!latest || !latest.timestamp) {
+            cardTempValueEl.textContent = "--";
+            cardTempTimeEl.textContent = "--";
+            cardTempPredictEl.textContent = "--";
+            cardTempTrendEl.textContent = "趋势: --";
+
+            cardHumidityValueEl.textContent = "--";
+            cardHumidityTimeEl.textContent = "--";
+            cardHumidityLevelEl.textContent = "--";
+            cardHumidityExtraEl.textContent = "最近 10 分钟平均：--";
+
+            cardPressureValueEl.textContent = "--";
+            cardPressureTimeEl.textContent = "--";
+            cardAlarmStatusEl.textContent = "未知";
+            cardAlarmMsgEl.textContent = "--";
+            return;
+        }
+
+        const ts = formatDateTime(latest.timestamp);
+
+        cardTempValueEl.textContent = formatNumber(latest.temperature, 1);
+        cardTempTimeEl.textContent = ts;
+        cardTempPredictEl.textContent = formatNumber(latest.predictedTemperature, 1);
+
+        const recentTemps = lastRecentData
+            .filter(d => d.temperature !== null && d.temperature !== undefined)
+            .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        if (recentTemps.length >= 2) {
+            const first = recentTemps[0].temperature;
+            const last = recentTemps[recentTemps.length - 1].temperature;
+            const diff = last - first;
+            if (diff > 0.1) {
+                cardTempTrendEl.textContent = `趋势: 上升 +${diff.toFixed(1)} ℃`;
+                cardTempTrendEl.classList.remove("down");
+            } else if (diff < -0.1) {
+                cardTempTrendEl.textContent = `趋势: 下降 ${diff.toFixed(1)} ℃`;
+                cardTempTrendEl.classList.add("down");
+            } else {
+                cardTempTrendEl.textContent = "趋势: 稳定";
+                cardTempTrendEl.classList.remove("down");
+            }
+        } else {
+            cardTempTrendEl.textContent = "趋势: 数据不足";
+            cardTempTrendEl.classList.remove("down");
+        }
+
+        cardHumidityValueEl.textContent = formatNumber(latest.humidity, 1);
+        cardHumidityTimeEl.textContent = ts;
+        cardHumidityLevelEl.textContent = latest.storageLevel || "--";
+
+        const tenMinutesAgo = new Date();
+        tenMinutesAgo.setMinutes(tenMinutesAgo.getMinutes() - 10);
+        const tenMinData = lastRecentData.filter(d => {
+            if (!d.timestamp) return false;
+            const t = new Date(d.timestamp);
+            return t >= tenMinutesAgo && d.humidity !== null && d.humidity !== undefined;
+        });
+        if (tenMinData.length > 0) {
+            const avgH = tenMinData.reduce((sum, d) => sum + d.humidity, 0) / tenMinData.length;
+            cardHumidityExtraEl.textContent = `最近 10 分钟平均：${avgH.toFixed(1)} %RH`;
+        } else {
+            cardHumidityExtraEl.textContent = "最近 10 分钟平均：数据不足";
+        }
+
+        cardPressureValueEl.textContent = formatNumber(latest.pressure, 1);
+        cardPressureTimeEl.textContent = ts;
+
+        const isAlarm = latest.alarmTriggered === true;
+        cardAlarmStatusEl.textContent = isAlarm ? "报警" : "正常";
+        cardAlarmStatusEl.classList.toggle("alarm-true", isAlarm);
+        cardAlarmStatusEl.classList.toggle("alarm-false", !isAlarm);
+        cardAlarmMsgEl.textContent = latest.alarmMessage || (isAlarm ? "存在异常，请检查冷库/环境。" : "无报警。");
+    }
+
+    function getMetricLabel(metric) {
+        if (metric === "temperature") return "温度 (℃)";
+        if (metric === "humidity") return "湿度 (%RH)";
+        if (metric === "pressure") return "气压 (hPa)";
+        return metric;
+    }
+
+    function updateChart() {
+        const ctx = document.getElementById("historyChart").getContext("2d");
+
+        const sorted = (lastRecentData || []).slice().sort((a, b) =>
+            new Date(a.timestamp) - new Date(b.timestamp)
+        );
+
+        const labels = sorted.map(d => {
+            const t = new Date(d.timestamp);
+            const hh = String(t.getHours()).padStart(2, "0");
+            const mm = String(t.getMinutes()).padStart(2, "0");
+            const ss = String(t.getSeconds()).padStart(2, "0");
+            return `${hh}:${mm}:${ss}`;
+        });
+
+        const metricKey = currentMetric;
+        const dataValues = sorted.map(d => {
+            const v = d[metricKey];
+            return (v === null || v === undefined) ? null : v;
+        });
+
+        const levelColors = sorted.map(d => {
+            if (d.storageLevel === "REALTIME") return "rgba(96, 165, 250, 0.85)";
+            if (d.storageLevel === "MINUTELY_COMPACTED") return "rgba(52, 211, 153, 0.85)";
+            if (d.storageLevel === "HOURLY_COMPACTED") return "rgba(251, 191, 36, 0.9)";
+            return "rgba(148, 163, 184, 0.85)";
+        });
+
+        chartTitleEl.textContent = getMetricLabel(metricKey) + " 历史曲线";
+        chartSubtitleEl.textContent = "最近 " + sorted.length + " 条数据 · 包含多级别压缩";
+        if (sorted.length > 1) {
+            const start = formatDateTime(sorted[0].timestamp);
+            const end = formatDateTime(sorted[sorted.length - 1].timestamp);
+            chartMetaEl.textContent = `${start}  —  ${end}`;
+        } else {
+            chartMetaEl.textContent = "--";
+        }
+
+        if (chartInstance) {
+            chartInstance.destroy();
+        }
+
+        chartInstance = new Chart(ctx, {
+            type: "line",
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: getMetricLabel(metricKey),
+                        data: dataValues,
+                        pointRadius: 2.2,
+                        pointHoverRadius: 4,
+                        pointBackgroundColor: levelColors,
+                        borderWidth: 2,
+                        lineTension: 0.2
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: "index",
+                    intersect: false
+                },
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: "#e5e7eb",
+                            font: { size: 11 }
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: (ctx) => {
+                                const idx = ctx.dataIndex;
+                                const d = sorted[idx];
+                                const v = ctx.parsed.y;
+                                const level = d.storageLevel || "未知";
+                                let unit = "";
+                                if (metricKey === "temperature") unit = " ℃";
+                                if (metricKey === "humidity") unit = " %RH";
+                                if (metricKey === "pressure") unit = " hPa";
+                                return `${getMetricLabel(metricKey)}: ${formatNumber(v, 2)}${unit}  · ${level}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: {
+                            color: "#9ca3af",
+                            maxRotation: 0,
+                            autoSkip: true,
+                            maxTicksLimit: 10,
+                            font: { size: 10 }
+                        },
+                        grid: {
+                            color: "rgba(55, 65, 81, 0.7)"
+                        }
+                    },
+                    y: {
+                        ticks: {
+                            color: "#9ca3af",
+                            font: { size: 10 }
+                        },
+                        grid: {
+                            color: "rgba(31, 41, 55, 0.8)"
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    function updateTable() {
+        dataTableBodyEl.innerHTML = "";
+        if (!lastRecentData || lastRecentData.length === 0) {
+            const tr = document.createElement("tr");
+            const td = document.createElement("td");
+            td.colSpan = 6;
+            td.textContent = "暂无数据。";
+            dataTableBodyEl.appendChild(tr);
+            tr.appendChild(td);
+            return;
+        }
+
+        const sorted = lastRecentData.slice().sort((a, b) =>
+            new Date(b.timestamp) - new Date(a.timestamp)
+        );
+
+        sorted.forEach(d => {
+            const tr = document.createElement("tr");
+
+            const tdTime = document.createElement("td");
+            tdTime.textContent = formatDateTime(d.timestamp);
+
+            const tdTemp = document.createElement("td");
+            tdTemp.textContent = formatNumber(d.temperature, 2);
+
+            const tdHum = document.createElement("td");
+            tdHum.textContent = formatNumber(d.humidity, 2);
+
+            const tdPres = document.createElement("td");
+            tdPres.textContent = formatNumber(d.pressure, 2);
+
+            const tdLevel = document.createElement("td");
+            const badgeLevel = document.createElement("span");
+            badgeLevel.className = "badge level";
+            badgeLevel.textContent = d.storageLevel || "未知";
+            tdLevel.appendChild(badgeLevel);
+
+            const tdAlarm = document.createElement("td");
+            const badgeAlarm = document.createElement("span");
+            const alarm = d.alarmTriggered === true;
+            badgeAlarm.className = "badge " + (alarm ? "alarm-true" : "alarm-false");
+            badgeAlarm.textContent = alarm ? "报警" : "正常";
+            tdAlarm.appendChild(badgeAlarm);
+
+            tr.appendChild(tdTime);
+            tr.appendChild(tdTemp);
+            tr.appendChild(tdHum);
+            tr.appendChild(tdPres);
+            tr.appendChild(tdLevel);
+            tr.appendChild(tdAlarm);
+
+            dataTableBodyEl.appendChild(tr);
+        });
+    }
+
+    document.querySelectorAll(".metric-pill").forEach(el => {
+        el.addEventListener("click", () => {
+            const metric = el.dataset.metric;
+            if (metric === currentMetric) return;
+            currentMetric = metric;
+            document.querySelectorAll(".metric-pill").forEach(p => p.classList.remove("active"));
+            el.classList.add("active");
+            updateChart();
+        });
+    });
+
+    refreshBtn.addEventListener("click", () => {
+        if (!selectedSensorId) {
+            showToast("请先选择左侧一个传感器。");
+            return;
+        }
+        refreshCurrentSensorData();
+    });
+
+    loadSensors();
+
+    setInterval(() => {
+        if (selectedSensorId) {
+            refreshCurrentSensorData();
+        }
+    }, 15000);
+</script>
+</body>
+</html>
