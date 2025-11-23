@@ -42,7 +42,7 @@ modbus:
       # 串口1：纯温度传感器 × 3 （保持不变）
       - name: "temp-only"
         port: "COM8"
-        # port: "ttyACM0"
+#        port: "ttyACM0"
         baudRate: 57600
 
       # 串口2：温湿度+气压一体传感器 × 3（根据 TH11S 手册修正）
@@ -193,6 +193,6 @@ data:
   compaction:
     intervalMs: 60000 # 数据稀疏化任务每隔 1 分钟执行一次
   retention: # 数据保留策略
-    realtimeMinutes: 20 # 秒级数据保留时长 (REALTIME)
+    realtimeMinutes: 1 # 秒级数据保留时长 (REALTIME)
     minutelyHours: 24 # 分钟级数据保留时长 (MINUTELY_COMPACTED)
     hourlyDays: 7 # 小时级数据保留时长 (HOURLY_COMPACTED)

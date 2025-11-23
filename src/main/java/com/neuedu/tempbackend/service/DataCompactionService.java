@@ -1,5 +1,6 @@
 package com.neuedu.tempbackend.service;
 
+import com.neuedu.tempbackend.config.RetentionProperties;
 import com.neuedu.tempbackend.model.SensorData;
 import com.neuedu.tempbackend.repository.SensorDataRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,18 +28,10 @@ public class DataCompactionService {
     @Autowired
     private SensorDataRepository sensorDataRepository;
 
-    // 配置数据保留策略
-    @Value("${data.retention.realtimeMinutes:10}")
-    private int realtimeRetentionMinutes; // 秒级数据保留时长
+    @Autowired
+    private RetentionProperties retentionProperties;
 
-    @Value("${data.retention.minutelyHours:24}")
-    private int minutelyRetentionHours; // 分钟级数据保留时长
-
-    @Value("${data.retention.hourlyDays:7}")
-    private int hourlyRetentionDays; // 小时级数据保留时长
-
-
-    @Scheduled(fixedRateString = "${data.compaction.intervalMs:60000}") // 默认每1分钟运行一次
+    @Scheduled(fixedRateString = "${data.compaction.intervalMs}") // 默认每1分钟运行一次
     @Transactional // 确保整个任务在事务中，聚合和删除操作要么都成功，要么都回滚
     @Retryable(
             value = {CannotAcquireLockException.class}, // 当捕获到锁定异常时重试
@@ -47,6 +40,9 @@ public class DataCompactionService {
     )
     public void compactData() {
         System.out.println("开始执行数据稀疏化任务...");
+        int realtimeRetentionMinutes = retentionProperties.getRealtimeMinutes();
+        int minutelyRetentionHours = retentionProperties.getMinutelyHours();
+        int hourlyRetentionDays = retentionProperties.getHourlyDays();
         LocalDateTime now = LocalDateTime.now();
 
         // 策略1：将 REALTIME 数据聚合为 MINUTELY_COMPACTED

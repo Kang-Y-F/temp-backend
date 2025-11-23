@@ -2,6 +2,7 @@ package com.neuedu.tempbackend.service;
 
 import com.neuedu.tempbackend.config.ModbusProperties;
 import com.neuedu.tempbackend.config.ModbusRtuManager;
+import com.neuedu.tempbackend.config.RetentionProperties;
 import com.neuedu.tempbackend.model.SensorData;
 import com.neuedu.tempbackend.repository.SensorDataRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,6 +45,7 @@ public class TemperaturePollingService {
     private final CloudUploadService cloudUploadService;
     private final ModbusProperties modbusProperties;
     private final ThreadPoolTaskScheduler taskScheduler;
+    private final RetentionProperties retentionProperties;
 
     @Value("${edge.deviceId:jetson-001}")
     private String deviceId;
@@ -108,7 +110,9 @@ public class TemperaturePollingService {
             AlarmService alarmService,
             CloudUploadService cloudUploadService,
             ModbusProperties modbusProperties,
-            ThreadPoolTaskScheduler taskScheduler) {
+            ThreadPoolTaskScheduler taskScheduler,
+            RetentionProperties retentionProperties   // ✅ 构造器注入
+    ) {
         this.manager = manager;
         this.sensorDataRepository = sensorDataRepository;
         this.predictionService = predictionService;
@@ -116,8 +120,8 @@ public class TemperaturePollingService {
         this.cloudUploadService = cloudUploadService;
         this.modbusProperties = modbusProperties;
         this.taskScheduler = taskScheduler;
+        this.retentionProperties = retentionProperties;
     }
-
     /**
      * 启动时构建 connection -> sensors 映射，并为每个串口启动一个固定频率的轮询任务。
      */
@@ -348,6 +352,9 @@ public class TemperaturePollingService {
 
     public List<SensorData> getRecentSensorDataForAll(int count) {
         LocalDateTime now = LocalDateTime.now();
+        int realtimeRetentionMinutes = retentionProperties.getRealtimeMinutes();
+        int minutelyRetentionHours   = retentionProperties.getMinutelyHours();
+        int hourlyRetentionDays      = retentionProperties.getHourlyDays();
         List<SensorData> result = new ArrayList<>();
 
         result.addAll(sensorDataRepository.findByTimestampBetweenAndStorageLevelOrderByTimestampAsc(
