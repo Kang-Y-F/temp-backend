@@ -29,41 +29,40 @@ server:
 
 # ==================== 重点：多串口 + 多传感器配置 ====================
 modbus:
-  # 全局默认串口参数（下面没单独写的都会继承这里）
+  # 全局默认串口参数
   serial:
-    baudRate: 57600
     dataBits: 8
     stopBits: 1
-    parity: 0      # 0=None
+    parity: 0
     encoding: RTU
-    pollIntervalMs: 100  # 全局轮询间隔，用于实时采集
+    pollIntervalMs: 1000  # 保持原来的全局配置
 
     # ------------------ 多个物理串口定义 ------------------
     connections:
-      # 串口1：纯温度传感器 × 3
-      - name: "temp-only"               # 内部引用名，随便起
+      # 串口1：纯温度传感器 × 3 （保持不变）
+      - name: "temp-only"
         port: "COM8"
-#        port: "ttyACM0"
-        baudRate: 57600                 # 可单独覆盖全局
+        # port: "ttyACM0"
+        baudRate: 57600
 
-      # 串口2：温湿度+气压一体传感器 × 3
-    #      - name: "thp-combo"               # 内部引用名
-    #        port: "/dev/ttyUSB0"
-    #        baudRate: 9600                  # 假设一体传感器波特率是9600，根据实际改
+      # 串口2：温湿度+气压一体传感器 × 3（根据 TH11S 手册修正）
+#      - name: "thp-combo"
+#        port: "COM10"   # 按你原来的注释使用 USB 串口
+#        baudRate: 9600         # TH11S 默认 9600bps
 
     # ------------------ 所有传感器列表 ------------------
     sensors:
       # ---------- 串口1：3个纯温度传感器 ----------
-#      - sensorId: "cold-room-01"
-#        sensorName: "冷藏库1号"
-#        connection: "temp-only"        # 对应上面 connections 的 name
-#        slaveId: 1
-#        temperature:
-#          registerType: "holding"      # holding 或 input
-#          address: 0
-#          dataType: 5                  # 5=FOUR_BYTE_INT_SIGNED（32位有符号），根据实际传感器手册改
-#          scale: 0.0001
-#          byteOrder: "ABCD"
+      - sensorId: "cold-room-01"
+        sensorName: "冷藏库1号"
+        connection: "temp-only"        # 对应上面 connections 的 name
+        slaveId: 1
+        temperature:
+          registerType: "holding"      # holding 或 input
+          address: 0
+          dataType: 5                  # 5=FOUR_BYTE_INT_SIGNED（32位有符号），根据实际传感器手册改
+          scale: 0.0001
+          byteOrder: "ABCD"
 
       - sensorId: "cold-room-02"
         sensorName: "冷藏库2号"
@@ -76,89 +75,86 @@ modbus:
           scale: 0.0001
           byteOrder: "ABCD"
 
-      #      - sensorId: "freezer-01"
-      #        sensorName: "冷冻库1号"
-      #        connection: "temp-only"
-      #        slaveId: 3
-      #        temperature:
-      #          registerType: "holding"
-      #          address: 0
-      #          dataType: 5
-      #          scale: 0.0001
-      #          byteOrder: "ABCD"
-      #
-      #      # ---------- 串口2：3个温湿度+气压一体传感器 ----------
-      #      - sensorId: "env-01"
-      #        sensorName: "环境监测点1"
-      #        connection: "thp-combo"
-      #        slaveId: 1
-      #        temperature:
-      #          registerType: "holding"
-      #          address: 0                   # 假设温度在寄存器0
-      #          dataType: 5
-      #          scale: 0.0001
-      #          byteOrder: "ABCD"
-      #        humidity:
-      #          registerType: "holding"
-      #          address: 1                   # 湿度在寄存器1
-      #          dataType: 5
-      #          scale: 0.0001
-      #          byteOrder: "ABCD"
-      #        pressure:
-      #          registerType: "holding"
-      #          address: 2                   # 气压在寄存器2
-      #          dataType: 5
-      #          scale: 0.0001
-      #          byteOrder: "ABCD"
-      #
-      #      - sensorId: "env-02"
-      #        sensorName: "环境监测点2"
-      #        connection: "thp-combo"
-      #        slaveId: 2
-      #        temperature:
-      #          registerType: "holding"
-      #          address: 0
-      #          dataType: 5
-      #          scale: 0.0001
-      #          byteOrder: "ABCD"
-      #        humidity:
-      #          registerType: "holding"
-      #          address: 1
-      #          dataType: 5
-      #          scale: 0.0001
-      #          byteOrder: "ABCD"
-      #        pressure:
-      #          registerType: "holding"
-      #          address: 2
-      #          dataType: 5
-      #          scale: 0.0001
-      #          byteOrder: "ABCD"
-      #
-      #      - sensorId: "env-03"
-      #        sensorName: "环境监测点3"
-      #        connection: "thp-combo"
-      #        slaveId: 3
-      #        temperature:
-      #          registerType: "holding"
-      #          address: 0
-      #          dataType: 5
-      #          scale: 0.0001
-      #          byteOrder: "ABCD"
-      #        humidity:
-      #          registerType: "holding"
-      #          address: 1
-      #          dataType: 5
-      #          scale: 0.0001
-      #          byteOrder: "ABCD"
-      #        pressure:
-      #          registerType: "holding"
-      #          address: 2
-      #          dataType: 5
-      #          scale: 0.0001
-      #          byteOrder: "ABCD"
+      - sensorId: "freezer-01"
+        sensorName: "冷冻库1号"
+        connection: "temp-only"
+        slaveId: 3
+        temperature:
+          registerType: "holding"
+          address: 0
+          dataType: 5
+          scale: 0.0001
+          byteOrder: "ABCD"
 
-      # 以后想再加第7、8、9...个传感器，直接在这里继续写就行
+      # ---------- 串口2：温湿度+气压一体传感器 TH11S × 3 ----------
+#      - sensorId: "env-01"
+#        sensorName: "环境监测点1"
+#        connection: "thp-combo"
+#        slaveId: 1
+#        temperature:
+#          registerType: "input"   # 功能码 04
+#          address: 0              # 0000H
+#          dataType: 3             # 建议：TWO_BYTE_INT_SIGNED，对应 2 字节有符号整数
+#          scale: 0.1              # 单位 0.1℃ -> 实际值 = 原始值 * 0.1
+#          byteOrder: "AB"         # 单寄存器，高字节在前，高低字节顺序 AB
+#        humidity:
+#          registerType: "input"
+#          address: 1              # 0001H
+#          dataType: 4
+#          scale: 0.1              # 单位 0.1%RH
+#          byteOrder: "AB"
+#        pressure:
+#          registerType: "input"
+#          address: 2              # 0002H
+#          dataType: 4
+#          scale: 0.1              # 单位 0.1hPa
+#          byteOrder: "AB"
 
+#      - sensorId: "env-02"
+#        sensorName: "环境监测点2"
+#        connection: "thp-combo"
+#        slaveId: 2
+#        temperature:
+#          registerType: "input"
+#          address: 0
+#          dataType: 3
+#          scale: 0.1
+#          byteOrder: "AB"
+#        humidity:
+#          registerType: "input"
+#          address: 1
+#          dataType: 4
+#          scale: 0.1
+#          byteOrder: "AB"
+#        pressure:
+#          registerType: "input"
+#          address: 2
+#          dataType: 4
+#          scale: 0.1
+#          byteOrder: "AB"
+#
+#      - sensorId: "env-03"
+#        sensorName: "环境监测点3"
+#        connection: "thp-combo"
+#        slaveId: 3
+#        temperature:
+#          registerType: "input"
+#          address: 0
+#          dataType: 3
+#          scale: 0.1
+#          byteOrder: "AB"
+#        humidity:
+#          registerType: "input"
+#          address: 1
+#          dataType: 4
+#          scale: 0.1
+#          byteOrder: "AB"
+#        pressure:
+#          registerType: "input"
+#          address: 2
+#          dataType: 4
+#          scale: 0.1
+#          byteOrder: "AB"
 edge:
   deviceId: jetson-001
 

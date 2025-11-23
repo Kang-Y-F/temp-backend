@@ -6,29 +6,34 @@ import com.neuedu.tempbackend.model.SensorData;
 import com.neuedu.tempbackend.repository.SensorDataRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.PostConstruct;
-import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset; // 导入 ZoneOffset
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
-import java.util.LinkedHashMap; // 导入 LinkedHashMap
-import java.time.ZoneOffset;
 
+/**
+ * 负责：
+ *  - 按固定频率轮询各串口上的传感器（Modbus 采集）
+ *  - 将原始数据写入本地数据库（REALTIME）
+ *  - 把数据异步交给预测/报警/上云处理
+ *
+ * 轮询策略：
+ *  - 每个串口（connectionName）一个调度任务
+ *  - 任务以 round-robin 的方式轮流采集该串口上的传感器
+ *  - 用户配置的 modbus.pollIntervalMs 表示“每个传感器期望的采样间隔”
+ *    -> 实际串口调度周期 = pollIntervalMs / 该串口传感器数量
+ */
 @Service
 public class TemperaturePollingService {
 
@@ -40,24 +45,60 @@ public class TemperaturePollingService {
     private final ModbusProperties modbusProperties;
     private final ThreadPoolTaskScheduler taskScheduler;
 
-    @Value("${edge.deviceId:jetson-001}") private String deviceId;
-    @Value("${cloud.upload.batchSize:50}") private int uploadBatchSize;
-    @Value("${cloud.upload.batchIntervalMs:60000}") private long uploadBatchIntervalMs;
+    @Value("${edge.deviceId:jetson-001}")
+    private String deviceId;
 
-    public record Sample(double value, Instant ts) {}
+    @Value("${cloud.upload.batchSize:50}")
+    private int uploadBatchSize;
+
+    @Value("${cloud.upload.batchIntervalMs:60000}")
+    private long uploadBatchIntervalMs;
+
+    public record Sample(double value, java.time.Instant ts) {}
     private final Map<String, AtomicReference<Sample>> latestSensorDataMap = new ConcurrentHashMap<>();
     private final Map<String, AtomicReference<SensorData>> latestCompleteSensorDataMap = new ConcurrentHashMap<>();
 
-    private final Map<String, ScheduledFuture<?>> scheduledPollingTasks = new ConcurrentHashMap<>();
+    /**
+     * 每个串口一个调度任务
+     * key: connectionName
+     */
+    private final Map<String, ScheduledFuture<?>> scheduledConnectionTasks = new ConcurrentHashMap<>();
+
+    /**
+     * 每个串口的轮询上下文：包含该串口上的所有传感器，以及当前轮询到哪个索引
+     */
+    private static class ConnectionPollingContext {
+        final String connectionName;
+        final List<ModbusProperties.SensorProperties> sensors;
+        final long periodMs;
+        int index = 0;
+
+        ConnectionPollingContext(String connectionName,
+                                 List<ModbusProperties.SensorProperties> sensors,
+                                 long periodMs) {
+            this.connectionName = connectionName;
+            this.sensors = sensors;
+            this.periodMs = periodMs;
+        }
+
+        synchronized ModbusProperties.SensorProperties nextSensor() {
+            if (sensors.isEmpty()) return null;
+            ModbusProperties.SensorProperties s = sensors.get(index);
+            index = (index + 1) % sensors.size();
+            return s;
+        }
+    }
+
+    private final Map<String, ConnectionPollingContext> connectionContexts = new ConcurrentHashMap<>();
 
     @Value("${data.retention.realtimeMinutes:20}")
-    private int realtimeRetentionMinutes; // 秒级数据保留时长
+    private int realtimeRetentionMinutes;
 
     @Value("${data.retention.minutelyHours:24}")
-    private int minutelyRetentionHours; // 分钟级数据保留时长
+    private int minutelyRetentionHours;
 
     @Value("${data.retention.hourlyDays:7}")
-    private int hourlyRetentionDays; // 小时级数据保留时长
+    private int hourlyRetentionDays;
 
     @Autowired
     public TemperaturePollingService(
@@ -77,93 +118,88 @@ public class TemperaturePollingService {
         this.taskScheduler = taskScheduler;
     }
 
+    /**
+     * 启动时构建 connection -> sensors 映射，并为每个串口启动一个固定频率的轮询任务。
+     */
     @PostConstruct
     public void initPollingTasks() {
-        if (modbusProperties.getSerial() == null || modbusProperties.getSerial().getSensors() == null || modbusProperties.getSerial().getSensors().isEmpty()) {
+        if (modbusProperties.getSerial() == null
+                || modbusProperties.getSerial().getSensors() == null
+                || modbusProperties.getSerial().getSensors().isEmpty()) {
             System.out.println("No sensors configured for polling in application.yml.");
             return;
         }
 
+        // 初始化 latest* map
         for (ModbusProperties.SensorProperties sensorProp : modbusProperties.getSerial().getSensors()) {
             String sensorId = sensorProp.getSensorId();
             if (sensorId == null || sensorId.isEmpty()) {
                 System.err.println("Sensor configuration in application.yml missing sensorId, skipping.");
                 continue;
             }
+            latestSensorDataMap.put(sensorId,
+                    new AtomicReference<>(new Sample(Double.NaN, java.time.Instant.EPOCH)));
+            latestCompleteSensorDataMap.put(sensorId,
+                    new AtomicReference<>(new SensorData()));
+        }
 
-            long initialDelay = Optional.ofNullable(sensorProp.getPollIntervalMs()).orElse(modbusProperties.getPollIntervalMs());
+        // 按 connection 分组传感器
+        Map<String, List<ModbusProperties.SensorProperties>> sensorsByConnection =
+                modbusProperties.getSerial().getSensors().stream()
+                        .filter(s -> s.getConnection() != null && !s.getConnection().isBlank())
+                        .collect(Collectors.groupingBy(ModbusProperties.SensorProperties::getConnection));
 
-            latestSensorDataMap.put(sensorId, new AtomicReference<>(new Sample(Double.NaN, Instant.EPOCH)));
-            latestCompleteSensorDataMap.put(sensorId, new AtomicReference<>(new SensorData()));
+        long targetPerSensorInterval =
+                modbusProperties.getPollIntervalMs() > 0 ? modbusProperties.getPollIntervalMs() : 1000L;
 
-            ScheduledFuture<?> task = taskScheduler.scheduleWithFixedDelay(
-                    () -> pollAndProcessSingleSensor(sensorProp),
-                    initialDelay
+        for (Map.Entry<String, List<ModbusProperties.SensorProperties>> entry : sensorsByConnection.entrySet()) {
+            String connectionName = entry.getKey();
+            List<ModbusProperties.SensorProperties> sensors = entry.getValue();
+            if (sensors.isEmpty()) continue;
+
+            // 串口调度周期 = 目标“每个传感器间隔” / 该串口传感器数量
+            long periodMs = Math.max(50L, targetPerSensorInterval / sensors.size());
+
+            ConnectionPollingContext context =
+                    new ConnectionPollingContext(connectionName, sensors, periodMs);
+            connectionContexts.put(connectionName, context);
+
+            ScheduledFuture<?> task = taskScheduler.scheduleAtFixedRate(
+                    () -> pollNextSensorOnConnection(context),
+                    periodMs
             );
-            scheduledPollingTasks.put(sensorId, task);
-            System.out.println("Scheduled initial polling for sensor " + sensorId + " (" + sensorProp.getSensorName() + ") with delay " + initialDelay + "ms");
+
+            scheduledConnectionTasks.put(connectionName, task);
+            System.out.println("Scheduled polling for connection '" + connectionName
+                    + "', sensors=" + sensors.size()
+                    + ", period=" + periodMs + "ms (per-sensor≈" + (periodMs * sensors.size()) + "ms)");
         }
     }
 
-
     /**
-     * 动态更新单个传感器的轮询间隔。
-     * 此方法由 ConfigSyncService 调用，以响应云端配置更新。
-     * @param sensorId 传感器ID
-     * @param newPollIntervalMs 新的轮询间隔（毫秒）
-     */
-    public void updateSensorPollingInterval(String sensorId, long newPollIntervalMs) {
-        ScheduledFuture<?> existingTask = scheduledPollingTasks.get(sensorId);
-        if (existingTask != null) {
-            existingTask.cancel(false); // 取消现有任务
-            System.out.println("Canceled existing polling task for sensor " + sensorId);
-        }
-
-        // 查找对应的传感器配置（ModbusProperties中存储的是初始配置）
-        Optional<ModbusProperties.SensorProperties> sensorPropOpt = modbusProperties.getSerial().getSensors().stream()
-                .filter(s -> sensorId.equals(s.getSensorId()))
-                .findFirst();
-
-        if (sensorPropOpt.isPresent()) {
-            ModbusProperties.SensorProperties sensorProp = sensorPropOpt.get(); // 获取原始配置
-            // 重新调度新任务
-            ScheduledFuture<?> newTask = taskScheduler.scheduleWithFixedDelay(
-                    () -> pollAndProcessSingleSensor(sensorProp), // 仍使用原始配置，只是改变了调度频率
-                    newPollIntervalMs
-            );
-            scheduledPollingTasks.put(sensorId, newTask);
-            System.out.println("Updated polling for sensor " + sensorId + " to new delay " + newPollIntervalMs + "ms");
-        } else {
-            System.err.println("Could not find sensor configuration for ID: " + sensorId + " to update polling interval. Make sure it's in application.yml.");
-        }
-    }
-
-
-    /**
-     * 轮询并处理单个传感器的逻辑
-     * @param sensorProp 传感器的配置属性 (来自 application.yml，包含了 Modbus 寄存器信息)
+     * 轮询指定串口上的下一个传感器（round-robin）。
+     * 该方法只做 Modbus 采集 + 写 REALTIME + 异步提交，不做重活。
      */
     @Transactional
-    public void pollAndProcessSingleSensor(ModbusProperties.SensorProperties sensorProp) {
-        long overallStart = System.currentTimeMillis();
+    public void pollNextSensorOnConnection(ConnectionPollingContext context) {
+        ModbusProperties.SensorProperties sensorProp = context.nextSensor();
+        if (sensorProp == null) return;
+
         String sensorId = sensorProp.getSensorId();
         String sensorName = sensorProp.getSensorName();
-        String connectionName = sensorProp.getConnection();
+        String connectionName = context.connectionName;
         int slaveId = sensorProp.getSlaveId();
 
-        try {
-            System.out.println("--- 开始轮询传感器 [" + sensorName + " (" + sensorId + ")]，线程: " + Thread.currentThread().getName() + " ---");
+        long start = System.currentTimeMillis();
 
-            // 1. 读取传感器数据
-            long modbusStart = System.currentTimeMillis();
+        try {
+            // 1. Modbus 读取
             Optional<Float> tempOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getTemperature());
             Optional<Float> humidityOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getHumidity());
             Optional<Float> pressureOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getPressure());
-            long modbusEnd = System.currentTimeMillis();
-            System.out.println("  Modbus读取耗时: " + (modbusEnd - modbusStart) + "ms");
 
             if (sensorProp.getTemperature() == null || tempOpt.isEmpty()) {
-                System.err.println("传感器 [" + sensorName + " (" + sensorId + ")] 未配置或未读取到有效温度数据，跳过本次处理。");
+                System.err.println("传感器 [" + sensorName + " (" + sensorId + ")] 未读取到温度数据，跳过本次采集。");
                 return;
             }
 
@@ -171,19 +207,7 @@ public class TemperaturePollingService {
             Float currentHumidity = humidityOpt.orElse(null);
             Float currentPressure = pressureOpt.orElse(null);
 
-            // 2. 调用预测服务 (单点预测)
-            long predictStart = System.currentTimeMillis();
-            Float predictedTemperature = predictionService.predict(currentTemperature, currentHumidity, currentPressure);
-            long predictEnd = System.currentTimeMillis();
-            System.out.println("  预测服务耗时: " + (predictEnd - predictStart) + "ms, 预测温度: " + (predictedTemperature != null ? String.format("%.2f", predictedTemperature) + "°C" : "N/A"));
-
-            // 3. 调用报警服务
-            long alarmStart = System.currentTimeMillis();
-            boolean isAlarm = alarmService.checkAlarm(sensorId, currentTemperature, predictedTemperature);
-            long alarmEnd = System.currentTimeMillis();
-            System.out.println("  报警检查耗时: " + (alarmEnd - alarmStart) + "ms, 是否报警: " + isAlarm);
-
-            // 4. 创建SensorData实体
+            // 2. 写一条 REALTIME 数据（仅原始值，预测和报警稍后异步处理）
             SensorData sensorData = new SensorData();
             sensorData.setDeviceId(deviceId);
             sensorData.setSensorId(sensorId);
@@ -192,74 +216,105 @@ public class TemperaturePollingService {
             sensorData.setTemperature(currentTemperature);
             sensorData.setHumidity(currentHumidity);
             sensorData.setPressure(currentPressure);
-            sensorData.setPredictedTemperature(predictedTemperature);
-            sensorData.setAlarmTriggered(isAlarm);
-            sensorData.setAlarmMessage(alarmService.getAlarmMessage(sensorId, sensorName, currentTemperature, predictedTemperature));
             sensorData.setStorageLevel("REALTIME");
+            sensorData.setPredictedTemperature(null);
+            sensorData.setAlarmTriggered(false);
+            sensorData.setAlarmMessage(null);
+            sensorData.setUploaded(false);
 
-            // 5. 保存到本地数据库
-            long dbSaveStart = System.currentTimeMillis();
-            sensorData.setUploaded(false); // 明确设置为 false，等待上传
             sensorDataRepository.save(sensorData);
-            long dbSaveEnd = System.currentTimeMillis();
-            System.out.println("  本地数据库保存耗时: " + (dbSaveEnd - dbSaveStart) + "ms, ID: " + sensorData.getId());
 
-            // 6. 提交异步上传任务
-            long uploadSubmitStart = System.currentTimeMillis();
-            cloudUploadService.uploadData(sensorData); // 现在是异步调用
-            long uploadSubmitEnd = System.currentTimeMillis();
-            System.out.println("  异步上传任务提交耗时: " + (uploadSubmitEnd - uploadSubmitStart) + "ms");
-            System.out.println("传感器 [" + sensorName + " (" + sensorId + ")] 最新数据已提交给异步上传通道。");
+            latestSensorDataMap.get(sensorId)
+                    .set(new Sample(currentTemperature, java.time.Instant.now()));
+            latestCompleteSensorDataMap.get(sensorId).set(sensorData);
 
-            long overallEnd = System.currentTimeMillis();
-            System.out.println("--- 传感器 [" + sensorName + " (" + sensorId + ")] 轮询处理总耗时 (不含异步上传实际执行): " + (overallEnd - overallStart) + "ms ---");
+            // 3. 将这条数据交给异步线程做预测 / 报警 / 实时上云
+            processSensorDataAsync(sensorData);
 
+            long end = System.currentTimeMillis();
+            System.out.println("Polled sensor [" + sensorName + " (" + sensorId + ")] on connection '"
+                    + connectionName + "', cost=" + (end - start) + "ms");
         } catch (Exception e) {
-            System.err.println("轮询或处理传感器 [" + sensorName + " (" + sensorId + ")] 数据时发生错误: " + e.getMessage());
+            System.err.println("轮询传感器 [" + sensorName + " (" + sensorId + ")] 时发生错误: " + e.getMessage());
             e.printStackTrace();
         }
     }
 
+    /**
+     * 异步处理采集到的一条数据：
+     *  - 调用 Python 预测服务
+     *  - 报警判断 & 填充报警信息
+     *  - 保存更新
+     *  - 实时单条上传到云端（给大屏实时显示）
+     *  批量上传仍由定时任务负责做兜底。
+     */
+    @Async("cloudUploadExecutor") // 复用已有线程池，避免和轮询抢线程
+    @Transactional
+    public void processSensorDataAsync(SensorData sensorData) {
+        try {
+            Float temperature = sensorData.getTemperature();
+            Float humidity = sensorData.getHumidity();
+            Float pressure = sensorData.getPressure();
 
+            // 1. 单点预测
+            Float predictedTemperature = predictionService.predict(temperature, humidity, pressure);
+            sensorData.setPredictedTemperature(predictedTemperature);
 
-    // 定时批量上传所有未上传的数据 (包括实时和聚合数据)
+            // 2. 报警判断
+            boolean isAlarm = alarmService.checkAlarm(
+                    sensorData.getSensorId(),
+                    temperature,
+                    predictedTemperature
+            );
+            sensorData.setAlarmTriggered(isAlarm);
+            sensorData.setAlarmMessage(
+                    alarmService.getAlarmMessage(
+                            sensorData.getSensorId(),
+                            sensorData.getSensorName(),
+                            temperature,
+                            predictedTemperature
+                    )
+            );
+
+            // 3. 保存更新后的记录
+            sensorDataRepository.save(sensorData);
+
+            // 4. 实时上传一条数据到云端（失败时 isUploaded 仍为 false，后面批量兜底）
+            cloudUploadService.uploadData(sensorData);
+        } catch (Exception e) {
+            System.err.println("异步处理传感器数据（预测/报警/实时上传）时发生错误: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    // ==================== 批量上传兜底（原逻辑保留） ====================
+
     @Scheduled(fixedDelayString = "${cloud.upload.batchIntervalMs}")
     public void scheduledUploadPendingDataToCloud() {
         cloudUploadService.uploadPendingDataToCloudTask(uploadBatchSize);
     }
 
-    // ==================== 预测所需历史数据获取方法 ====================
+    // ==================== 预测用历史数据 & 查询方法（基本保持原样） ====================
 
-    /**
-     * 获取用于预测的降采样历史数据。
-     * 根据你的 ARIMA 模型输入要求，这里将原始数据降采样到 5 秒一个点。
-     * 只从 REALTIME 存储级别中获取数据。
-     * @param sensorId 传感器ID
-     * @param historyWindowMinutes 需要回溯的历史窗口（分钟）
-     * @return 降采样后的 SensorData 列表 (每个点代表 5 秒的平均值)
-     */
     public List<SensorData> get5SecondAggregatedHistoryForPrediction(String sensorId, int historyWindowMinutes) {
         LocalDateTime endTime = LocalDateTime.now();
-        // 稍微多取一点数据以确保边界对齐，并且确保即使是最近的 5 秒窗口也有数据
         LocalDateTime startTime = endTime.minusMinutes(historyWindowMinutes).minusSeconds(5);
 
-        // 只从 REALTIME 存储级别中获取原始数据
-        List<SensorData> rawData = sensorDataRepository.findBySensorIdAndTimestampBetweenAndStorageLevelOrderByTimestampAsc(
-                sensorId, startTime, endTime, "REALTIME");
+        List<SensorData> rawData = sensorDataRepository
+                .findBySensorIdAndTimestampBetweenAndStorageLevelOrderByTimestampAsc(
+                        sensorId, startTime, endTime, "REALTIME");
 
         List<SensorData> aggregatedData = new ArrayList<>();
 
-        // 对原始数据进行 5 秒平均降采样
-        // 使用 LinkedHashMap 保持分组后键的插入顺序，确保时间序列的顺序
         Map<LocalDateTime, List<SensorData>> groupedBy5Seconds = rawData.stream()
                 .collect(Collectors.groupingBy(data -> {
-                    long epochSecond = data.getTimestamp().toEpochSecond(ZoneOffset.UTC); // 使用 UTC 时区，确保一致性
-                    long roundedSecond = (epochSecond / 5) * 5; // 截断到最近的 5 秒边界
-                    return LocalDateTime.ofEpochSecond(roundedSecond, 0, ZoneOffset.UTC); // 重新转换为 LocalDateTime
+                    long epochSecond = data.getTimestamp().toEpochSecond(ZoneOffset.UTC);
+                    long roundedSecond = (epochSecond / 5) * 5;
+                    return LocalDateTime.ofEpochSecond(roundedSecond, 0, ZoneOffset.UTC);
                 }, LinkedHashMap::new, Collectors.toList()));
 
         groupedBy5Seconds.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey()) // 再次确保时间顺序
+                .sorted(Map.Entry.comparingByKey())
                 .forEach(entry -> {
                     LocalDateTime timeWindow = entry.getKey();
                     List<SensorData> windowData = entry.getValue();
@@ -284,81 +339,63 @@ public class TemperaturePollingService {
                         aggregated.setTemperature(Double.isNaN(avgTemp) ? null : (float) avgTemp);
                         aggregated.setHumidity(Double.isNaN(avgHumidity) ? null : (float) avgHumidity);
                         aggregated.setPressure(Double.isNaN(avgPressure) ? null : (float) avgPressure);
-                        // 对于预测输入，其他字段如 deviceId, sensorName, predictedTemperature, alarmTriggered 等不需要填充
-                        aggregated.setStorageLevel("TEMP_5SEC_AGG"); // 临时标志，不存储到 DB
+                        aggregated.setStorageLevel("TEMP_5SEC_AGG");
                         aggregatedData.add(aggregated);
                     }
                 });
         return aggregatedData;
     }
 
-    // ==================== 公共查询方法 (已调整以利用 storageLevel) ====================
-
-    /**
-     * 获取所有传感器的最近N条历史数据，智能地从不同存储级别中组合数据。
-     * @param count 要获取的数据条数
-     * @return 组合后的SensorData列表
-     */
     public List<SensorData> getRecentSensorDataForAll(int count) {
         LocalDateTime now = LocalDateTime.now();
         List<SensorData> result = new ArrayList<>();
 
-        // 查询最近 realtimeRetentionMinutes 分钟的 REALTIME 数据 (最精细)
-        // 确保时间范围覆盖到配置文件中的保留时长
         result.addAll(sensorDataRepository.findByTimestampBetweenAndStorageLevelOrderByTimestampAsc(
                 now.minusMinutes(realtimeRetentionMinutes), now, "REALTIME"));
 
-        // 查询 minutelyRetentionHours 小时内的 MINUTELY_COMPACTED 数据
         result.addAll(sensorDataRepository.findByTimestampBetweenAndStorageLevelOrderByTimestampAsc(
-                now.minusHours(minutelyRetentionHours), now.minusMinutes(realtimeRetentionMinutes), "MINUTELY_COMPACTED")); // 排除 REALTIME 已经覆盖的时间
+                now.minusHours(minutelyRetentionHours), now.minusMinutes(realtimeRetentionMinutes), "MINUTELY_COMPACTED"));
 
-        // 查询 hourlyRetentionDays 天内的 HOURLY_COMPACTED 数据
         result.addAll(sensorDataRepository.findByTimestampBetweenAndStorageLevelOrderByTimestampAsc(
-                now.minusDays(hourlyRetentionDays), now.minusHours(minutelyRetentionHours), "HOURLY_COMPACTED")); // 排除 MINUTELY_COMPACTED 已经覆盖的时间
+                now.minusDays(hourlyRetentionDays), now.minusHours(minutelyRetentionHours), "HOURLY_COMPACTED"));
 
-        // 合并所有结果，按时间降序排列，取最新 count 条
         return result.stream()
                 .sorted(Comparator.comparing(SensorData::getTimestamp).reversed())
-                .distinct() // 简单的去重
+                .distinct()
                 .limit(count)
                 .collect(Collectors.toList());
     }
 
-    /**
-     * 获取某个传感器的最近N条历史数据，智能地从不同存储级别中组合数据。
-     * @param sensorId 传感器ID
-     * @param count 要获取的数据条数
-     * @return 组合后的SensorData列表
-     */
     public List<SensorData> getRecentSensorDataBySensorId(String sensorId, int count) {
         LocalDateTime now = LocalDateTime.now();
         List<SensorData> result = new ArrayList<>();
 
-        // 查询最近 realtimeRetentionMinutes 分钟的 REALTIME 数据
         result.addAll(sensorDataRepository.findBySensorIdAndTimestampBetweenAndStorageLevelOrderByTimestampAsc(
                 sensorId, now.minusMinutes(realtimeRetentionMinutes), now, "REALTIME"));
 
-        // 查询 minutelyRetentionHours 小时内的 MINUTELY_COMPACTED 数据
         result.addAll(sensorDataRepository.findBySensorIdAndTimestampBetweenAndStorageLevelOrderByTimestampAsc(
                 sensorId, now.minusHours(minutelyRetentionHours), now.minusMinutes(realtimeRetentionMinutes), "MINUTELY_COMPACTED"));
 
-        // 查询 hourlyRetentionDays 天内的 HOURLY_COMPACTED 数据
         result.addAll(sensorDataRepository.findBySensorIdAndTimestampBetweenAndStorageLevelOrderByTimestampAsc(
                 sensorId, now.minusDays(hourlyRetentionDays), now.minusHours(minutelyRetentionHours), "HOURLY_COMPACTED"));
 
-        // 合并所有结果，按时间降序排列，取最新 count 条
         return result.stream()
                 .sorted(Comparator.comparing(SensorData::getTimestamp).reversed())
-                .distinct() // 简单的去重
+                .distinct()
                 .limit(count)
                 .collect(Collectors.toList());
     }
 
     public SensorData getLatestCompleteSensorData(String sensorId) {
-        return latestCompleteSensorDataMap.getOrDefault(sensorId, new AtomicReference<>(new SensorData())).get();
+        return latestCompleteSensorDataMap.getOrDefault(sensorId,
+                new AtomicReference<>(new SensorData())).get();
     }
+
     public List<ModbusProperties.SensorProperties> getAllConfiguredSensors() {
         return modbusProperties.getSerial().getSensors();
     }
-    public long getDefaultPollIntervalMs() { return modbusProperties.getPollIntervalMs(); }
+
+    public long getDefaultPollIntervalMs() {
+        return modbusProperties.getPollIntervalMs();
+    }
 }

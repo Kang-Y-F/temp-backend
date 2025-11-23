@@ -14,7 +14,7 @@ import java.util.List;
 public class ModbusProperties {
 
     private Serial serial = new Serial(); // 包含了 connections 和 sensors
-    private long pollIntervalMs = 100; // 全局默认轮询间隔，可被单个传感器覆盖
+    private long pollIntervalMs = 1000; // 全局默认轮询间隔，可被单个传感器覆盖
 
     public Serial getSerial() { return serial; }
     public void setSerial(Serial serial) { this.serial = serial; }
