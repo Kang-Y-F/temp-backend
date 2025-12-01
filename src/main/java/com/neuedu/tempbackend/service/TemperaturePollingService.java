@@ -16,25 +16,12 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.annotation.PostConstruct;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
-/**
- * 负责：
- *  - 按固定频率轮询各串口上的传感器（Modbus 采集）
- *  - 将原始数据写入本地数据库（REALTIME）
- *  - 把数据异步交给预测/报警/上云处理
- *
- * 轮询策略：
- *  - 每个串口（connectionName）一个调度任务
- *  - 任务以 round-robin 的方式轮流采集该串口上的传感器
- *  - 用户配置的 modbus.pollIntervalMs 表示“每个传感器期望的采样间隔”
- *    -> 实际串口调度周期 = pollIntervalMs / 该串口传感器数量
- */
 @Service
 public class TemperaturePollingService {
 
@@ -60,15 +47,8 @@ public class TemperaturePollingService {
     private final Map<String, AtomicReference<Sample>> latestSensorDataMap = new ConcurrentHashMap<>();
     private final Map<String, AtomicReference<SensorData>> latestCompleteSensorDataMap = new ConcurrentHashMap<>();
 
-    /**
-     * 每个串口一个调度任务
-     * key: connectionName
-     */
     private final Map<String, ScheduledFuture<?>> scheduledConnectionTasks = new ConcurrentHashMap<>();
 
-    /**
-     * 每个串口的轮询上下文：包含该串口上的所有传感器，以及当前轮询到哪个索引
-     */
     private static class ConnectionPollingContext {
         final String connectionName;
         final List<ModbusProperties.SensorProperties> sensors;
@@ -111,7 +91,7 @@ public class TemperaturePollingService {
             CloudUploadService cloudUploadService,
             ModbusProperties modbusProperties,
             ThreadPoolTaskScheduler taskScheduler,
-            RetentionProperties retentionProperties   // ✅ 构造器注入
+            RetentionProperties retentionProperties
     ) {
         this.manager = manager;
         this.sensorDataRepository = sensorDataRepository;
@@ -122,9 +102,7 @@ public class TemperaturePollingService {
         this.taskScheduler = taskScheduler;
         this.retentionProperties = retentionProperties;
     }
-    /**
-     * 启动时构建 connection -> sensors 映射，并为每个串口启动一个固定频率的轮询任务。
-     */
+
     @PostConstruct
     public void initPollingTasks() {
         if (modbusProperties.getSerial() == null
@@ -134,7 +112,6 @@ public class TemperaturePollingService {
             return;
         }
 
-        // 初始化 latest* map
         for (ModbusProperties.SensorProperties sensorProp : modbusProperties.getSerial().getSensors()) {
             String sensorId = sensorProp.getSensorId();
             if (sensorId == null || sensorId.isEmpty()) {
@@ -147,7 +124,6 @@ public class TemperaturePollingService {
                     new AtomicReference<>(new SensorData()));
         }
 
-        // 按 connection 分组传感器
         Map<String, List<ModbusProperties.SensorProperties>> sensorsByConnection =
                 modbusProperties.getSerial().getSensors().stream()
                         .filter(s -> s.getConnection() != null && !s.getConnection().isBlank())
@@ -161,7 +137,6 @@ public class TemperaturePollingService {
             List<ModbusProperties.SensorProperties> sensors = entry.getValue();
             if (sensors.isEmpty()) continue;
 
-            // 串口调度周期 = 目标“每个传感器间隔” / 该串口传感器数量
             long periodMs = Math.max(50L, targetPerSensorInterval / sensors.size());
 
             ConnectionPollingContext context =
@@ -180,10 +155,6 @@ public class TemperaturePollingService {
         }
     }
 
-    /**
-     * 轮询指定串口上的下一个传感器（round-robin）。
-     * 该方法只做 Modbus 采集 + 写 REALTIME + 异步提交，不做重活。
-     */
     @Transactional
     public void pollNextSensorOnConnection(ConnectionPollingContext context) {
         ModbusProperties.SensorProperties sensorProp = context.nextSensor();
@@ -197,21 +168,46 @@ public class TemperaturePollingService {
         long start = System.currentTimeMillis();
 
         try {
-            // 1. Modbus 读取
-            Optional<Float> tempOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getTemperature());
-            Optional<Float> humidityOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getHumidity());
-            Optional<Float> pressureOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getPressure());
+            Float currentTemperature;
+            Float currentHumidity;
+            Float currentPressure;
 
-            if (sensorProp.getTemperature() == null || tempOpt.isEmpty()) {
-                System.err.println("传感器 [" + sensorName + " (" + sensorId + ")] 未读取到温度数据，跳过本次采集。");
-                return;
+            // ===== 只对 thp-combo（TH11S）使用一次性读 3 寄存器，其它串口保持原逻辑 =====
+            if ("thp-combo".equals(connectionName)) {
+                ModbusProperties.RegisterConfig tempCfg = sensorProp.getTemperature();
+                ModbusProperties.RegisterConfig humCfg  = sensorProp.getHumidity();
+                ModbusProperties.RegisterConfig presCfg = sensorProp.getPressure();
+
+                Optional<ModbusRtuManager.Th11sReadings> thOpt =
+                        manager.readTh11sAll(connectionName, slaveId, tempCfg, humCfg, presCfg);
+
+                if (tempCfg == null || thOpt.isEmpty() || thOpt.get().temperature == null) {
+                    System.err.println("传感器 [" + sensorName + " (" + sensorId + ")] 未读取到温度数据，跳过本次采集。");
+                    return;
+                }
+
+                ModbusRtuManager.Th11sReadings th = thOpt.get();
+                currentTemperature = th.temperature;
+                currentHumidity    = th.humidity;
+                currentPressure    = th.pressure;
+
+            } else {
+                // ========= 原来的三次 readSensorRegister 逻辑（例如 temp-only 串口） =========
+                Optional<Float> tempOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getTemperature());
+                Optional<Float> humidityOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getHumidity());
+                Optional<Float> pressureOpt = manager.readSensorRegister(connectionName, slaveId, sensorProp.getPressure());
+
+                if (sensorProp.getTemperature() == null || tempOpt.isEmpty()) {
+                    System.err.println("传感器 [" + sensorName + " (" + sensorId + ")] 未读取到温度数据，跳过本次采集。");
+                    return;
+                }
+
+                currentTemperature = tempOpt.get();
+                currentHumidity = humidityOpt.orElse(null);
+                currentPressure = pressureOpt.orElse(null);
             }
 
-            Float currentTemperature = tempOpt.get();
-            Float currentHumidity = humidityOpt.orElse(null);
-            Float currentPressure = pressureOpt.orElse(null);
-
-            // 2. 写一条 REALTIME 数据（仅原始值，预测和报警稍后异步处理）
+            // ====================== 写 REALTIME 数据 + 异步处理 ======================
             SensorData sensorData = new SensorData();
             sensorData.setDeviceId(deviceId);
             sensorData.setSensorId(sensorId);
@@ -232,7 +228,6 @@ public class TemperaturePollingService {
                     .set(new Sample(currentTemperature, java.time.Instant.now()));
             latestCompleteSensorDataMap.get(sensorId).set(sensorData);
 
-            // 3. 将这条数据交给异步线程做预测 / 报警 / 实时上云
             processSensorDataAsync(sensorData);
 
             long end = System.currentTimeMillis();
@@ -244,15 +239,7 @@ public class TemperaturePollingService {
         }
     }
 
-    /**
-     * 异步处理采集到的一条数据：
-     *  - 调用 Python 预测服务
-     *  - 报警判断 & 填充报警信息
-     *  - 保存更新
-     *  - 实时单条上传到云端（给大屏实时显示）
-     *  批量上传仍由定时任务负责做兜底。
-     */
-    @Async("cloudUploadExecutor") // 复用已有线程池，避免和轮询抢线程
+    @Async("cloudUploadExecutor")
     @Transactional
     public void processSensorDataAsync(SensorData sensorData) {
         try {
@@ -260,11 +247,9 @@ public class TemperaturePollingService {
             Float humidity = sensorData.getHumidity();
             Float pressure = sensorData.getPressure();
 
-            // 1. 单点预测
             Float predictedTemperature = predictionService.predict(temperature, humidity, pressure);
             sensorData.setPredictedTemperature(predictedTemperature);
 
-            // 2. 报警判断
             boolean isAlarm = alarmService.checkAlarm(
                     sensorData.getSensorId(),
                     temperature,
@@ -280,10 +265,8 @@ public class TemperaturePollingService {
                     )
             );
 
-            // 3. 保存更新后的记录
             sensorDataRepository.save(sensorData);
 
-            // 4. 实时上传一条数据到云端（失败时 isUploaded 仍为 false，后面批量兜底）
             cloudUploadService.uploadData(sensorData);
         } catch (Exception e) {
             System.err.println("异步处理传感器数据（预测/报警/实时上传）时发生错误: " + e.getMessage());
@@ -291,14 +274,10 @@ public class TemperaturePollingService {
         }
     }
 
-    // ==================== 批量上传兜底（原逻辑保留） ====================
-
     @Scheduled(fixedDelayString = "${cloud.upload.batchIntervalMs}")
     public void scheduledUploadPendingDataToCloud() {
         cloudUploadService.uploadPendingDataToCloudTask(uploadBatchSize);
     }
-
-    // ==================== 预测用历史数据 & 查询方法（基本保持原样） ====================
 
     public List<SensorData> get5SecondAggregatedHistoryForPrediction(String sensorId, int historyWindowMinutes) {
         LocalDateTime endTime = LocalDateTime.now();

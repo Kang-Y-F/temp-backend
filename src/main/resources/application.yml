@@ -47,7 +47,7 @@ modbus:
 
       # 串口2：温湿度+气压一体传感器 × 3（根据 TH11S 手册修正）
 #      - name: "thp-combo"
-#        port: "COM10"   # 按你原来的注释使用 USB 串口
+#        port: "COM11"   # 按你原来的注释使用 USB 串口
 #        baudRate: 9600         # TH11S 默认 9600bps
 
     # ------------------ 所有传感器列表 ------------------
@@ -74,7 +74,7 @@ modbus:
           dataType: 5
           scale: 0.0001
           byteOrder: "ABCD"
-
+#
       - sensorId: "freezer-01"
         sensorName: "冷冻库1号"
         connection: "temp-only"
@@ -92,22 +92,22 @@ modbus:
 #        connection: "thp-combo"
 #        slaveId: 1
 #        temperature:
-#          registerType: "input"   # 功能码 04
+#          registerType: "holding"   # 功能码 03
 #          address: 0              # 0000H
 #          dataType: 3             # 建议：TWO_BYTE_INT_SIGNED，对应 2 字节有符号整数
 #          scale: 0.1              # 单位 0.1℃ -> 实际值 = 原始值 * 0.1
 #          byteOrder: "AB"         # 单寄存器，高字节在前，高低字节顺序 AB
 #        humidity:
-#          registerType: "input"
+#          registerType: "holding"
 #          address: 1              # 0001H
-#          dataType: 4
+#          dataType: 3
 #          scale: 0.1              # 单位 0.1%RH
 #          byteOrder: "AB"
 #        pressure:
-#          registerType: "input"
+#          registerType: "holding"
 #          address: 2              # 0002H
-#          dataType: 4
-#          scale: 0.1              # 单位 0.1hPa
+#          dataType: 3
+#          scale: 0.01              # 单位 0.1hPa
 #          byteOrder: "AB"
 
 #      - sensorId: "env-02"
@@ -115,22 +115,22 @@ modbus:
 #        connection: "thp-combo"
 #        slaveId: 2
 #        temperature:
-#          registerType: "input"
+#          registerType: "holding"
 #          address: 0
 #          dataType: 3
 #          scale: 0.1
 #          byteOrder: "AB"
 #        humidity:
-#          registerType: "input"
+#          registerType: "holding"
 #          address: 1
-#          dataType: 4
+#          dataType: 3
 #          scale: 0.1
 #          byteOrder: "AB"
 #        pressure:
-#          registerType: "input"
+#          registerType: "holding"
 #          address: 2
-#          dataType: 4
-#          scale: 0.1
+#          dataType: 3
+#          scale: 0.01
 #          byteOrder: "AB"
 #
 #      - sensorId: "env-03"
@@ -138,25 +138,25 @@ modbus:
 #        connection: "thp-combo"
 #        slaveId: 3
 #        temperature:
-#          registerType: "input"
+#          registerType: "holding"
 #          address: 0
 #          dataType: 3
 #          scale: 0.1
 #          byteOrder: "AB"
 #        humidity:
-#          registerType: "input"
+#          registerType: "holding"
 #          address: 1
-#          dataType: 4
+#          dataType: 3
 #          scale: 0.1
 #          byteOrder: "AB"
 #        pressure:
-#          registerType: "input"
+#          registerType: "holding"
 #          address: 2
-#          dataType: 4
-#          scale: 0.1
+#          dataType: 3
+#          scale: 0.01
 #          byteOrder: "AB"
 edge:
-  deviceId: jetson-001
+  deviceId: jetson-003
 
 prediction:
   service:
@@ -193,6 +193,6 @@ data:
   compaction:
     intervalMs: 60000 # 数据稀疏化任务每隔 1 分钟执行一次
   retention: # 数据保留策略
-    realtimeMinutes: 1 # 秒级数据保留时长 (REALTIME)
+    realtimeMinutes: 15 # 秒级数据保留时长 (REALTIME)
     minutelyHours: 24 # 分钟级数据保留时长 (MINUTELY_COMPACTED)
     hourlyDays: 7 # 小时级数据保留时长 (HOURLY_COMPACTED)

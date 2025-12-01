@@ -3,14 +3,19 @@ package com.neuedu.tempbackend.config;
 import com.neuedu.tempbackend.util.JSerialCommWrapper;
 import com.serotonin.modbus4j.ModbusFactory;
 import com.serotonin.modbus4j.ModbusMaster;
-import com.serotonin.modbus4j.locator.BaseLocator;
 import com.serotonin.modbus4j.exception.ModbusInitException;
 import com.serotonin.modbus4j.exception.ModbusTransportException;
+import com.serotonin.modbus4j.locator.BaseLocator;
+import com.serotonin.modbus4j.msg.ReadHoldingRegistersRequest;
+import com.serotonin.modbus4j.msg.ReadHoldingRegistersResponse;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PostConstruct;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -42,41 +47,43 @@ public class ModbusRtuManager implements DisposableBean {
         for (ModbusProperties.ConnectionProperties connProp : modbusProperties.getSerial().getConnections()) {
             try {
                 // 合并全局默认值和连接特定值
-                // 注意：如果全局默认没有设置，而连接特定也没有设置，这里可能会出现NPE。
-                // 推荐在application.yml中提供全局默认值，或者在这里给个兜底
                 String port = connProp.getPort();
-                int baudRate = Optional.ofNullable(connProp.getBaudRate()).orElse(modbusProperties.getSerial().getBaudRate() != null ? modbusProperties.getSerial().getBaudRate() : 9600); // 兜底值
-                int dataBits = Optional.ofNullable(connProp.getDataBits()).orElse(modbusProperties.getSerial().getDataBits() != null ? modbusProperties.getSerial().getDataBits() : 8); // 兜底值
-                int stopBits = Optional.ofNullable(connProp.getStopBits()).orElse(modbusProperties.getSerial().getStopBits() != null ? modbusProperties.getSerial().getStopBits() : 1); // 兜底值
-                int parity = Optional.ofNullable(connProp.getParity()).orElse(modbusProperties.getSerial().getParity() != null ? modbusProperties.getSerial().getParity() : 0); // 兜底值
-                String encoding = Optional.ofNullable(connProp.getEncoding()).orElse(modbusProperties.getSerial().getEncoding() != null ? modbusProperties.getSerial().getEncoding() : "RTU"); // 兜底值
+                int baudRate = Optional.ofNullable(connProp.getBaudRate())
+                        .orElse(modbusProperties.getSerial().getBaudRate() != null
+                                ? modbusProperties.getSerial().getBaudRate() : 9600);
+                int dataBits = Optional.ofNullable(connProp.getDataBits())
+                        .orElse(modbusProperties.getSerial().getDataBits() != null
+                                ? modbusProperties.getSerial().getDataBits() : 8);
+                int stopBits = Optional.ofNullable(connProp.getStopBits())
+                        .orElse(modbusProperties.getSerial().getStopBits() != null
+                                ? modbusProperties.getSerial().getStopBits() : 1);
+                int parity = Optional.ofNullable(connProp.getParity())
+                        .orElse(modbusProperties.getSerial().getParity() != null
+                                ? modbusProperties.getSerial().getParity() : 0);
+                String encoding = Optional.ofNullable(connProp.getEncoding())
+                        .orElse(modbusProperties.getSerial().getEncoding() != null
+                                ? modbusProperties.getSerial().getEncoding() : "RTU");
 
                 // 创建并初始化Modbus Master
                 ModbusMaster master = createAndInitMaster(port, baudRate, dataBits, stopBits, parity, encoding);
                 masters.put(connProp.getName(), master);
                 masterLocks.put(connProp.getName(), new ReentrantLock());
-                System.out.println("Modbus Master '" + connProp.getName() + "' initialized for port: " + port + ", baud: " + baudRate + ", encoding: " + encoding);
+                System.out.println("Modbus Master '" + connProp.getName() + "' initialized for port: "
+                        + port + ", baud: " + baudRate + ", encoding: " + encoding);
             } catch (Exception e) {
-                System.err.println("Failed to initialize Modbus Master for connection '" + connProp.getName() + "' on port " + connProp.getPort() + ": " + e.getMessage());
-                // 这里可以选择是否中断应用启动，或者只是记录错误并跳过
+                System.err.println("Failed to initialize Modbus Master for connection '" + connProp.getName()
+                        + "' on port " + connProp.getPort() + ": " + e.getMessage());
             }
         }
     }
 
     /**
      * 根据配置创建并初始化单个 Modbus Master
-     * @param port 串口名称
-     * @param baudRate 波特率
-     * @param dataBits 数据位
-     * @param stopBits 停止位
-     * @param parity 校验位
-     * @param encoding 编码 (RTU/ASCII)
-     * @return 初始化后的 ModbusMaster
-     * @throws ModbusInitException 如果初始化失败
      */
-    private ModbusMaster createAndInitMaster(String port, int baudRate, int dataBits, int stopBits, int parity, String encoding) throws ModbusInitException {
-        // Modbus4j 的 JSerialCommWrapper 不直接支持 encoding 参数，默认为 RTU。
-        // 如果需要ASCII，需要手动创建对应的 ASCII master
+    private ModbusMaster createAndInitMaster(String port, int baudRate, int dataBits,
+                                             int stopBits, int parity, String encoding)
+            throws ModbusInitException {
+
         JSerialCommWrapper wrapper = new JSerialCommWrapper(port, baudRate, dataBits, stopBits, parity);
         ModbusMaster master;
         if ("ASCII".equalsIgnoreCase(encoding)) {
@@ -87,34 +94,29 @@ public class ModbusRtuManager implements DisposableBean {
             System.out.println("Creating RTU master for port: " + port);
         }
 
-        master.setTimeout(1500); // 设置超时时间
-        master.setRetries(0);    // 设置重试次数
-        master.init();           // 初始化
+        master.setTimeout(3000); // 超时时间（ms）
+        master.setRetries(2);    // 重试次数，可按需要改大一点
+        master.init();
         return master;
     }
 
     /**
      * 获取指定连接名称的 ModbusMaster。
-     * @param connectionName 连接名称
-     * @return ModbusMaster 实例
-     * @throws IllegalArgumentException 如果 connectionName 不存在或未初始化
      */
     public ModbusMaster getMaster(String connectionName) {
         ModbusMaster master = masters.get(connectionName);
         if (master == null) {
-            throw new IllegalArgumentException("Modbus Master for connection '" + connectionName + "' not found or not initialized.");
+            throw new IllegalArgumentException(
+                    "Modbus Master for connection '" + connectionName + "' not found or not initialized.");
         }
         return master;
     }
 
     /**
-     * 读取指定传感器寄存器的值。
-     * @param connectionName 串口连接名称
-     * @param slaveId Modbus从站ID
-     * @param registerConfig 寄存器配置（地址、类型、数据类型、比例因子）
-     * @return 读取到的值（已应用比例因子）
+     * 读取指定传感器寄存器的值（原有逻辑，保持不动）。
      */
-    public Optional<Float> readSensorRegister(String connectionName, int slaveId, ModbusProperties.RegisterConfig registerConfig) {
+    public Optional<Float> readSensorRegister(String connectionName, int slaveId,
+                                              ModbusProperties.RegisterConfig registerConfig) {
         if (registerConfig == null || registerConfig.getAddress() == -1) {
             return Optional.empty(); // 寄存器未配置或地址无效
         }
@@ -126,7 +128,7 @@ public class ModbusRtuManager implements DisposableBean {
         }
 
         ReentrantLock lock = masterLocks.get(connectionName);
-        if (lock == null) { // 理论上不会发生，因为masters和masterLocks会同时初始化
+        if (lock == null) {
             System.err.println("No lock found for connection: " + connectionName);
             return Optional.empty();
         }
@@ -135,11 +137,16 @@ public class ModbusRtuManager implements DisposableBean {
         try {
             BaseLocator<Number> locator;
             if ("holding".equalsIgnoreCase(registerConfig.getRegisterType())) {
-                locator = BaseLocator.holdingRegister(slaveId, registerConfig.getAddress(), registerConfig.getDataType());
+                // BaseLocator.holdingRegister -> 功能码 03
+                locator = BaseLocator.holdingRegister(
+                        slaveId, registerConfig.getAddress(), registerConfig.getDataType());
             } else if ("input".equalsIgnoreCase(registerConfig.getRegisterType())) {
-                locator = BaseLocator.inputRegister(slaveId, registerConfig.getAddress(), registerConfig.getDataType());
+                // BaseLocator.inputRegister -> 功能码 04
+                locator = BaseLocator.inputRegister(
+                        slaveId, registerConfig.getAddress(), registerConfig.getDataType());
             } else {
-                System.err.println("Invalid register type for sensor [conn=" + connectionName + ", slave=" + slaveId + "]: " + registerConfig.getRegisterType());
+                System.err.println("Invalid register type for sensor [conn=" + connectionName
+                        + ", slave=" + slaveId + "]: " + registerConfig.getRegisterType());
                 return Optional.empty();
             }
             Number raw = m.getValue(locator);
@@ -148,16 +155,129 @@ public class ModbusRtuManager implements DisposableBean {
                     .map(value -> (float) (value * registerConfig.getScale()));
 
         } catch (ModbusTransportException e) {
-            System.err.println("Modbus transport error for sensor [conn=" + connectionName + ", slave=" + slaveId + ", addr=" + registerConfig.getAddress() + "]: " + e.getMessage());
+            System.err.println("Modbus transport error for sensor [conn=" + connectionName
+                    + ", slave=" + slaveId + ", addr=" + registerConfig.getAddress() + "]: "
+                    + e.getMessage());
             return Optional.empty();
         } catch (Exception e) {
-            System.err.println("Error reading Modbus register for sensor [conn=" + connectionName + ", slave=" + slaveId + ", addr=" + registerConfig.getAddress() + "]: " + e.getMessage());
+            System.err.println("Error reading Modbus register for sensor [conn=" + connectionName
+                    + ", slave=" + slaveId + ", addr=" + registerConfig.getAddress() + "]: "
+                    + e.getMessage());
             return Optional.empty();
         } finally {
             lock.unlock(); // 解锁
         }
     }
 
+    // ================== 新增：一次性读取 TH11S 温湿度压力（功能码 03） ==================
+
+    /**
+     * 一次性读取 TH11S 的温度 / 湿度 / 压力。
+     *
+     * 使用功能码 03（Read Holding Registers），和原厂软件一致：
+     *   请求形如：01 03 00 00 00 03 CRC
+     */
+    public static class Th11sReadings {
+        public final Float temperature;  // ℃（已经乘以 scale）
+        public final Float humidity;     // %RH
+        public final Float pressure;     // hPa
+
+        public Th11sReadings(Float temperature, Float humidity, Float pressure) {
+            this.temperature = temperature;
+            this.humidity = humidity;
+            this.pressure = pressure;
+        }
+    }
+
+    public Optional<Th11sReadings> readTh11sAll(
+            String connectionName,
+            int slaveId,
+            ModbusProperties.RegisterConfig tempCfg,
+            ModbusProperties.RegisterConfig humCfg,
+            ModbusProperties.RegisterConfig presCfg
+    ) {
+        // 任何一个寄存器都没配置就不用读了
+        List<Integer> addrs = new ArrayList<>();
+        if (tempCfg != null && tempCfg.getAddress() >= 0) {
+            addrs.add(tempCfg.getAddress());
+        }
+        if (humCfg != null && humCfg.getAddress() >= 0) {
+            addrs.add(humCfg.getAddress());
+        }
+        if (presCfg != null && presCfg.getAddress() >= 0) {
+            addrs.add(presCfg.getAddress());
+        }
+        if (addrs.isEmpty()) {
+            return Optional.empty();
+        }
+
+        ModbusMaster m = masters.get(connectionName);
+        if (m == null) {
+            System.err.println("Modbus Master not found for connection: " + connectionName);
+            return Optional.empty();
+        }
+        ReentrantLock lock = masterLocks.get(connectionName);
+        if (lock == null) {
+            System.err.println("No lock found for connection: " + connectionName);
+            return Optional.empty();
+        }
+
+        lock.lock();
+        try {
+            int start = Collections.min(addrs);
+            int end = Collections.max(addrs);
+            int count = end - start + 1;
+
+            // ★★ 这里使用 ReadHoldingRegistersRequest —— 功能码 03 ★★
+            ReadHoldingRegistersRequest req =
+                    new ReadHoldingRegistersRequest(slaveId, start, count);
+            ReadHoldingRegistersResponse resp =
+                    (ReadHoldingRegistersResponse) m.send(req);
+
+            if (resp.isException()) {
+                System.err.println("Modbus exception for TH11S [conn=" + connectionName
+                        + ", slave=" + slaveId + "]: " + resp.getExceptionMessage());
+                return Optional.empty();
+            }
+
+            short[] data = resp.getShortData();
+            if (data == null || data.length < count) {
+                System.err.println("Invalid TH11S data length: " + (data == null ? 0 : data.length)
+                        + ", expected >= " + count);
+                return Optional.empty();
+            }
+
+            Float t = extractAndScale(start, data, tempCfg);
+            Float h = extractAndScale(start, data, humCfg);
+            Float p = extractAndScale(start, data, presCfg);
+
+            return Optional.of(new Th11sReadings(t, h, p));
+        } catch (Exception e) {
+            System.err.println("readTh11sAll error [conn=" + connectionName
+                    + ", slave=" + slaveId + "]: " + e.getMessage());
+            e.printStackTrace();
+            return Optional.empty();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private Float extractAndScale(int start, short[] data, ModbusProperties.RegisterConfig cfg) {
+        if (cfg == null || cfg.getAddress() < 0) {
+            return null;
+        }
+        int idx = cfg.getAddress() - start;
+        if (idx < 0 || idx >= data.length) {
+            return null;
+        }
+        short raw = data[idx];
+        double rawScale = cfg.getScale();   // double，不可能为null
+        double scale = (rawScale == 0.0 ? 1.0 : rawScale);
+
+        return (float) (raw * scale);
+    }
+
+    // ========================================================================
 
     /**
      * Spring应用销毁时，关闭所有Modbus Master连接
@@ -173,7 +293,8 @@ public class ModbusRtuManager implements DisposableBean {
                     master.destroy();
                     System.out.println("Modbus Master '" + connectionName + "' destroyed.");
                 } catch (Exception e) {
-                    System.err.println("Error destroying Modbus Master '" + connectionName + "': " + e.getMessage());
+                    System.err.println("Error destroying Modbus Master '" + connectionName
+                            + "': " + e.getMessage());
                 }
             }
         }
